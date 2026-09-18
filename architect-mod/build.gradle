@@ -1,0 +1,8 @@
+dependencies {
+    implementation project(':architect-domain')
+    implementation project(':build-assistant')
+    implementation project(':instant-builder')
+    implementation project(':build-transformer')
+    implementation project(':world-generator')
+    implementation project(':ai-foundation')
+}
