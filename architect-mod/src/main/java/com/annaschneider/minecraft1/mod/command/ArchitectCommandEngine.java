@@ -18,6 +18,9 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class ArchitectCommandEngine {
+    private static final int STRUCTURE_MAX_BLOCKS = 10_000;
+    private static final int KINGDOM_RADIUS = 24;
+
     private final TemplateRegistry templates = new TemplateRegistry();
     private final ShapeBuilderService shapes = new ShapeBuilderService();
     private final BuildTransformerService transformer = new BuildTransformerService();
@@ -62,7 +65,7 @@ public final class ArchitectCommandEngine {
         requireLength(args, 3, "Usage: /architect build <house|castle|temple|village>");
         Blueprint blueprint = templates.create(args[2].toLowerCase(Locale.ROOT)).orElseThrow(() ->
             new IllegalArgumentException("Unknown template. Use house, castle, temple, village."));
-        return queueBuild(playerId, world, blueprint, "Template queued: " + args[2]);
+        return queueBuild(playerId, world, blueprint, "Template queued: " + args[2], STRUCTURE_MAX_BLOCKS, 96);
     }
 
     private CommandResult handleShape(UUID playerId, BlockWorld world, String[] args) {
@@ -83,7 +86,7 @@ public final class ArchitectCommandEngine {
             }
             default -> throw new IllegalArgumentException("Unknown shape. Use wall, sphere, or column.");
         };
-        return queueBuild(playerId, world, blueprint, "Shape queued: " + shape);
+        return queueBuild(playerId, world, blueprint, "Shape queued: " + shape, STRUCTURE_MAX_BLOCKS, 96);
     }
 
     private CommandResult handleTransform(UUID playerId, BlockWorld world, String[] args) {
@@ -94,7 +97,7 @@ public final class ArchitectCommandEngine {
         Blueprint source = templates.create(template).orElseThrow(() ->
             new IllegalArgumentException("Unknown template. Use house, castle, temple, village."));
         Blueprint transformed = transformer.transform(op, template, source);
-        return queueBuild(playerId, world, transformed, "Transform queued: " + op.name().toLowerCase(Locale.ROOT) + " " + template);
+        return queueBuild(playerId, world, transformed, "Transform queued: " + op.name().toLowerCase(Locale.ROOT) + " " + template, STRUCTURE_MAX_BLOCKS, 96);
     }
 
     private CommandResult handleWorld(UUID playerId, BlockWorld world, String[] args) {
@@ -102,8 +105,9 @@ public final class ArchitectCommandEngine {
         if (!"kingdom".equalsIgnoreCase(args[2])) {
             throw new IllegalArgumentException("Unsupported world preset. Use kingdom.");
         }
-        Blueprint blueprint = worldCreator.createPlan(new WorldCreationRequest("fantasy kingdom", 64)).previewBlueprint();
-        return queueBuild(playerId, world, blueprint, "World preset queued: kingdom");
+        WorldCreationRequest request = new WorldCreationRequest("fantasy kingdom", KINGDOM_RADIUS);
+        Blueprint blueprint = worldCreator.createPlan(request).previewBlueprint();
+        return queueBuild(playerId, world, blueprint, "World preset queued: kingdom", worldMaxBlocks(request.maxRadius()), 96);
     }
 
     private CommandResult handleUndo(UUID playerId, BlockWorld world) {
@@ -113,14 +117,19 @@ public final class ArchitectCommandEngine {
         return new CommandResult(true, "Undo complete for latest session.");
     }
 
-    private CommandResult queueBuild(UUID playerId, BlockWorld world, Blueprint blueprint, String successMessage) {
+    private CommandResult queueBuild(UUID playerId, BlockWorld world, Blueprint blueprint, String successMessage, int maxBlocks, int maxAbsCoordinate) {
         validateSupportedBlocks(blueprint);
-        BlueprintValidation.validateBlueprint(blueprint, 10_000, 96);
+        BlueprintValidation.validateBlueprint(blueprint, maxBlocks, maxAbsCoordinate);
         if (!queue.start(playerId, blueprint, new Vec3i(0, 1, 0))) {
             return new CommandResult(false, "Build already in progress for this player.");
         }
         queue.tick(world);
         return new CommandResult(true, successMessage + " (" + blueprint.blocks().size() + " blocks)");
+    }
+
+    private static int worldMaxBlocks(int radius) {
+        int side = radius * 2 + 1;
+        return side * side + 4_096;
     }
 
     private static void validateSupportedBlocks(Blueprint blueprint) {

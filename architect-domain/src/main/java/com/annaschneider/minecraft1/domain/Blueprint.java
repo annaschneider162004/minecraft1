@@ -29,6 +29,9 @@ public final class Blueprint {
     }
 
     public Blueprint rotated(int degrees) {
+        if (Math.floorMod(degrees, 90) != 0) {
+            throw new IllegalArgumentException("Rotation must be a multiple of 90 degrees.");
+        }
         int turns = Math.floorMod(degrees, 360) / 90;
         List<BlueprintBlock> rotated = new ArrayList<>(blocks.size());
         for (BlueprintBlock block : blocks) {

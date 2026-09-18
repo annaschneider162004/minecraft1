@@ -50,10 +50,12 @@ architect-mod/build/libs/
 
 ## Run (development)
 
+Nền tảng hiện tại tập trung vào kiến trúc multi-module + logic deterministic có test.
+Mục `architect-mod` đã có `fabric.mod.json` và lớp `ArchitectFabricMod` làm điểm entry nền tảng cho runtime Fabric.
+Trong phiên bản foundation này, lệnh build chính là:
+
 ```bash
-gradle :architect-mod:runServer
-# or
-gradle :architect-mod:runClient
+gradle build
 ```
 
 ## Commands (MVP)

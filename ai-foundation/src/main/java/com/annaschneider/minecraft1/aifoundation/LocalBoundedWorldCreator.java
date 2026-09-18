@@ -9,14 +9,15 @@ public final class LocalBoundedWorldCreator implements AIWorldCreatorOrchestrato
 
     @Override
     public WorldPlan createPlan(WorldCreationRequest request) {
+        int radius = request.maxRadius();
         return new WorldPlan(
             List.of(
-                "Create bounded terrain platform (deterministic).",
+                "Create bounded terrain platform (deterministic radius: " + radius + ").",
                 "Lay road cross centered at origin.",
                 "Place farm, forest, and river zones.",
                 "Mark districts for future AI expansion."
             ),
-            generator.generateKingdom(),
+            generator.generateKingdom(radius),
             true
         );
     }

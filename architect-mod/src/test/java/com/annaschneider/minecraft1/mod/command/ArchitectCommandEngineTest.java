@@ -35,4 +35,31 @@ class ArchitectCommandEngineTest {
 
         assertFalse(result.success());
     }
+
+    @Test
+    void rejectsUnsupportedShapeBlock() {
+        ArchitectCommandEngine engine = new ArchitectCommandEngine();
+        InMemoryBlockWorld world = new InMemoryBlockWorld();
+
+        CommandResult result = engine.execute(UUID.randomUUID(), world, "/architect shape wall 3 2 diamond_block");
+
+        assertFalse(result.success());
+    }
+
+    @Test
+    void executesWorldCommandAndSupportsUndo() {
+        ArchitectCommandEngine engine = new ArchitectCommandEngine();
+        InMemoryBlockWorld world = new InMemoryBlockWorld();
+        UUID player = UUID.randomUUID();
+
+        CommandResult worldResult = engine.execute(player, world, "/architect world kingdom");
+        assertTrue(worldResult.success());
+
+        while (engine.tick(world).completedSessions() == 0) {
+            // process deterministic queue
+        }
+
+        CommandResult undo = engine.execute(player, world, "/architect undo");
+        assertTrue(undo.success());
+    }
 }

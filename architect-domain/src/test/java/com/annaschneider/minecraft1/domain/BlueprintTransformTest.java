@@ -37,4 +37,13 @@ class BlueprintTransformTest {
 
         assertThrows(IllegalArgumentException.class, () -> BlueprintValidation.validateBlueprint(source, 1, 64));
     }
+
+    @Test
+    void rejectsInvalidRotationDegree() {
+        Blueprint source = Blueprint.builder("shape")
+            .add(1, 0, 0, "stone")
+            .build();
+
+        assertThrows(IllegalArgumentException.class, () -> source.rotated(45));
+    }
 }

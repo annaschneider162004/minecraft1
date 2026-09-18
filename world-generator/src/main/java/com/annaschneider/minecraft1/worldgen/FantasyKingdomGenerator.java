@@ -4,19 +4,20 @@ import com.annaschneider.minecraft1.domain.Blueprint;
 import com.annaschneider.minecraft1.domain.BlueprintBuilder;
 
 public final class FantasyKingdomGenerator {
-    public Blueprint generateKingdom() {
+    public Blueprint generateKingdom(int radius) {
+        int boundedRadius = Math.max(16, Math.min(64, radius));
         BlueprintBuilder b = Blueprint.builder("world-kingdom");
 
-        for (int x = -24; x <= 24; x++) {
-            for (int z = -24; z <= 24; z++) {
+        for (int x = -boundedRadius; x <= boundedRadius; x++) {
+            for (int z = -boundedRadius; z <= boundedRadius; z++) {
                 b.add(x, 0, z, "grass_block");
             }
         }
 
-        for (int x = -24; x <= 24; x++) {
+        for (int x = -boundedRadius; x <= boundedRadius; x++) {
             b.add(x, 1, 0, "dirt_path");
         }
-        for (int z = -24; z <= 24; z++) {
+        for (int z = -boundedRadius; z <= boundedRadius; z++) {
             b.add(0, 1, z, "dirt_path");
         }
 
@@ -35,7 +36,7 @@ public final class FantasyKingdomGenerator {
             }
         }
 
-        for (int z = -24; z <= 24; z++) {
+        for (int z = -boundedRadius; z <= boundedRadius; z++) {
             b.add(-8, 1, z, "water");
             b.add(-9, 1, z, "water");
         }
