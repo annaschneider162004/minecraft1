@@ -1,3 +1,18 @@
-pluginManagement { repositories { gradlePluginPortal(); maven { url = 'https://maven.minecraftforge.net' } } }
-dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { maven { url = 'https://maven.minecraftforge.net' } } }
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.fabricmc.net/' }
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        mavenCentral()
+        maven { url = 'https://maven.fabricmc.net/' }
+        maven { url = 'https://libraries.minecraft.net/' }
+    }
+}
+
 rootProject.name = 'minecraft1'
+include 'architect-domain', 'build-assistant', 'instant-builder', 'build-transformer', 'world-generator', 'ai-foundation', 'architect-mod'
