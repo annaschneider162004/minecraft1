@@ -234,4 +234,19 @@ class DesktopBridgeTest {
         out.writeInt(0);
         return bytes.toByteArray();
     }
+
+    @Test
+    void fallsBackToAFreePortWhenTheConfiguredOneIsBusy(@TempDir Path otherRoot) throws Exception {
+        ArchitectCommandEngine second = new ArchitectCommandEngine(otherRoot,
+            new BuildSettings(64, 8, 0, 16, 2, 4_000_000L, 262_144, otherRoot.resolve("journals")));
+        DesktopBridge other = new DesktopBridge(second, name -> Optional.empty(), "test");
+        try {
+            LinkInfo started = other.start(info.port());
+            assertTrue(started.port() > 0 && started.port() != info.port());
+            assertEquals(started, LinkInfo.read(otherRoot.resolve(LinkProtocol.LINK_FILE_NAME)));
+        } finally {
+            other.close();
+            second.close();
+        }
+    }
 }

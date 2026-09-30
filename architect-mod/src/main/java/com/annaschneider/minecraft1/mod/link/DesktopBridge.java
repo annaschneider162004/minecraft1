@@ -82,7 +82,13 @@ public final class DesktopBridge implements AutoCloseable {
         }
         LinkInfo info = LinkInfo.create(port, modVersion);
         LinkServer created = new LinkServer(port, info.token());
-        created.start();
+        try {
+            created.start();
+        } catch (IOException busy) {
+            // e.g. a second Minecraft instance: any free port works because the desktop app reads it from the link file
+            created = new LinkServer(0, info.token());
+            created.start();
+        }
         info = info.withPort(created.port());
         Path file = engine.dataRoot().resolve(LinkProtocol.LINK_FILE_NAME);
         try {
