@@ -99,6 +99,37 @@ public final class BuildQueue {
         return Optional.of(job.progress());
     }
 
+    /**
+     * Pauses the owner's queued or running job. A paused job keeps its place in the queue but receives no budget and
+     * releases its chunk tickets until {@link #resume} is called.
+     */
+    public Optional<JobProgress> pause(UUID owner, WorldAccess world) {
+        Job job = jobs.get(owner);
+        if (job == null) {
+            return Optional.empty();
+        }
+        if (job.state != JobState.PAUSED) {
+            job.stateBeforePause = job.state;
+            job.state = JobState.PAUSED;
+            job.waitingForChunks = false;
+            job.releaseAll(world);
+        }
+        return Optional.of(job.progress());
+    }
+
+    /** Resumes a job paused with {@link #pause}. */
+    public Optional<JobProgress> resume(UUID owner) {
+        Job job = jobs.get(owner);
+        if (job == null) {
+            return Optional.empty();
+        }
+        if (job.state == JobState.PAUSED) {
+            job.state = job.stateBeforePause == null ? JobState.QUEUED : job.stateBeforePause;
+            job.stateBeforePause = null;
+        }
+        return Optional.of(job.progress());
+    }
+
     /** Active/queued job of the owner or, if none, the last finished one. */
     public Optional<JobProgress> progress(UUID owner) {
         Job job = jobs.get(owner);
@@ -132,7 +163,12 @@ public final class BuildQueue {
             if (active.size() >= settings.maxConcurrentJobs()) {
                 break;
             }
-            active.add(job);
+            if (job.state != JobState.PAUSED) {
+                active.add(job);
+            }
+        }
+        if (active.isEmpty()) {
+            return new TickReport(0, 0, jobs.size());
         }
         int blocks = Math.max(1, settings.blocksPerTick() / active.size());
         int sections = Math.max(1, settings.sectionsPerTick() / active.size());

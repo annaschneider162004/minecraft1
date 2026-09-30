@@ -1,0 +1,51 @@
+import org.gradle.internal.os.OperatingSystem
+
+apply plugin: 'application'
+
+dependencies {
+    implementation project(':architect-link')
+}
+
+application {
+    mainClass = 'com.annaschneider.minecraft1.desktop.ArchitectDesktopApp'
+    applicationName = 'architect-desktop'
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': application.mainClass.get(), 'Implementation-Version': project.version
+    }
+}
+
+// Opens the app connected to the headless demo (start `gradle :architect-mod:runLinkDemo` first).
+tasks.register('runWithDemo', JavaExec) {
+    group = 'application'
+    description = 'Runs the desktop app against the link demo server of :architect-mod.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = application.mainClass
+    args '--link-file', project(':architect-mod').file('run/link-demo/desktop-link.json').absolutePath
+}
+
+// Self-contained app folder with a native launcher and a bundled Java runtime ("Minecraft Architect.exe" when run on
+// Windows). Uses jpackage from the Java 17 toolchain; no installer tools (WiX) are needed for an app image.
+tasks.register('packageApp', Exec) {
+    group = 'distribution'
+    description = 'Builds build/jpackage/Minecraft Architect (a native app image with its own Java runtime).'
+    dependsOn tasks.named('installDist')
+    def launcher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(17) }
+    def input = layout.buildDirectory.dir('install/architect-desktop/lib')
+    def dest = layout.buildDirectory.dir('jpackage')
+    def mainJar = tasks.named('jar').flatMap { it.archiveFileName }
+    def appVersion = project.version.toString().replaceAll(/[^0-9.].*$/, '')
+    def windows = OperatingSystem.current().isWindows()
+    doFirst {
+        delete dest
+        def jpackage = launcher.get().metadata.installationPath.file('bin/jpackage' + (windows ? '.exe' : '')).asFile
+        def command = [jpackage.absolutePath, '--type', 'app-image', '--name', 'Minecraft Architect',
+                       '--app-version', appVersion, '--vendor', 'annaschneider162004',
+                       '--input', input.get().asFile.absolutePath, '--main-jar', mainJar.get(),
+                       '--main-class', application.mainClass.get(), '--dest', dest.get().asFile.absolutePath,
+                       '--java-options', '-Dfile.encoding=UTF-8']
+        commandLine command
+    }
+}

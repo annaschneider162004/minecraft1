@@ -1,0 +1,4 @@
+dependencies {
+    // Gson 2.10.1 is the version bundled with Minecraft 1.20.1, so the mod needs no extra jar at runtime.
+    api 'com.google.code.gson:gson:2.10.1'
+}

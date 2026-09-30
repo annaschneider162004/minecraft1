@@ -128,6 +128,43 @@ class BuildQueueTest {
     }
 
     @Test
+    void pausedBuildStopsUntilResumedAndCanBeCancelled() {
+        BuildQueue queue = new BuildQueue(settings(50));
+        MapWorld world = new MapWorld();
+        UUID owner = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+        assertTrue(queue.pause(owner, world).isEmpty());
+        queue.submit(owner, cube(10, "stone"), new Vec3i(0, 0, 0), world);
+        queue.tick(world);
+        assertEquals(JobState.PAUSED, queue.pause(owner, world).orElseThrow().state());
+        assertEquals(0, queue.tick(world).blocksChanged());
+        assertEquals(50, world.blocks.size());
+        assertTrue(queue.isBusy(owner));
+
+        queue.submit(other, cube(2, "dirt"), new Vec3i(100, 0, 100), world);
+        runUntilIdleExcept(queue, world, owner);
+        assertEquals(58, world.blocks.size(), "other jobs keep running while one is paused");
+
+        assertEquals(JobState.RUNNING, queue.resume(owner).orElseThrow().state());
+        runUntilIdle(queue, world, 100);
+        assertEquals(1_008, world.blocks.size());
+        assertEquals(JobState.COMPLETED, queue.progress(owner).orElseThrow().state());
+
+        queue.submit(owner, cube(4, "stone"), new Vec3i(200, 0, 200), world);
+        queue.pause(owner, world);
+        assertEquals(JobState.CANCELLED, queue.cancel(owner, world).orElseThrow().state());
+        assertTrue(queue.resume(owner).isEmpty());
+    }
+
+    private static void runUntilIdleExcept(BuildQueue queue, MapWorld world, UUID paused) {
+        for (int i = 0; i < 100 && queue.snapshot().size() > 1; i++) {
+            queue.tick(world);
+        }
+        assertEquals(1, queue.snapshot().size());
+        assertEquals(paused, queue.snapshot().get(0).owner());
+    }
+
+    @Test
     void cancelledBuildCanBeUndone() {
         BuildQueue queue = new BuildQueue(settings(50));
         MapWorld world = new MapWorld();

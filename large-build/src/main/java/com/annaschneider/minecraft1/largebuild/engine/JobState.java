@@ -3,6 +3,7 @@ package com.annaschneider.minecraft1.largebuild.engine;
 public enum JobState {
     QUEUED,
     RUNNING,
+    PAUSED,
     COMPLETED,
     CANCELLED,
     FAILED;
