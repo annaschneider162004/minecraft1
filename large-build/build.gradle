@@ -1,0 +1,5 @@
+dependencies {
+    api project(':architect-domain')
+    // Gson 2.10.1 is the version bundled with Minecraft 1.20.1, so no extra jar is needed at runtime in the game.
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
