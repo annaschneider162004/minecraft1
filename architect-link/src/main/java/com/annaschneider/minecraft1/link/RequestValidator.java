@@ -71,7 +71,7 @@ public final class RequestValidator {
                     requirePlanId(request.planId());
                 }
             }
-            case STATUS, PAUSE, RESUME, CANCEL, UNDO -> {
+            case STATUS, PAUSE, RESUME, CANCEL, UNDO, RECORD_START, RECORD_STOP, RECORD_STATUS -> {
                 // no parameters
             }
         }

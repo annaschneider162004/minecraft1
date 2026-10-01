@@ -20,22 +20,27 @@ public record LinkMessage(
     ServerInfo server,
     JobStatus job,
     PlanSummary plan,
-    String source
+    String source,
+    RecordingStatus recording
 ) {
+    public LinkMessage(int v, MessageKind kind, String id, Boolean ok, String message, ServerInfo server, JobStatus job, PlanSummary plan, String source) {
+        this(v, kind, id, ok, message, server, job, plan, source, null);
+    }
+
     public static LinkMessage ok(String id, String message) {
-        return new LinkMessage(LinkProtocol.VERSION, MessageKind.RESPONSE, id, true, message, null, null, null, null);
+        return new LinkMessage(LinkProtocol.VERSION, MessageKind.RESPONSE, id, true, message, null, null, null, null, null);
     }
 
     public static LinkMessage error(String id, String message) {
-        return new LinkMessage(LinkProtocol.VERSION, MessageKind.RESPONSE, id, false, message, null, null, null, null);
+        return new LinkMessage(LinkProtocol.VERSION, MessageKind.RESPONSE, id, false, message, null, null, null, null, null);
     }
 
     public static LinkMessage progress(JobStatus job) {
-        return new LinkMessage(LinkProtocol.VERSION, MessageKind.PROGRESS, null, null, job.describe(), null, job, null, null);
+        return new LinkMessage(LinkProtocol.VERSION, MessageKind.PROGRESS, null, null, job.describe(), null, job, null, null, null);
     }
 
     public static LinkMessage log(String message) {
-        return new LinkMessage(LinkProtocol.VERSION, MessageKind.LOG, null, null, message, null, null, null, null);
+        return new LinkMessage(LinkProtocol.VERSION, MessageKind.LOG, null, null, message, null, null, null, null, null);
     }
 
     public boolean isOk() {
@@ -43,18 +48,22 @@ public record LinkMessage(
     }
 
     public LinkMessage withServer(ServerInfo value) {
-        return new LinkMessage(v, kind, id, ok, message, value, job, plan, source);
+        return new LinkMessage(v, kind, id, ok, message, value, job, plan, source, recording);
     }
 
     public LinkMessage withJob(JobStatus value) {
-        return new LinkMessage(v, kind, id, ok, message, server, value, plan, source);
+        return new LinkMessage(v, kind, id, ok, message, server, value, plan, source, recording);
     }
 
     public LinkMessage withPlan(PlanSummary value) {
-        return new LinkMessage(v, kind, id, ok, message, server, job, value, source);
+        return new LinkMessage(v, kind, id, ok, message, server, job, value, source, recording);
     }
 
     public LinkMessage withSource(String value) {
-        return new LinkMessage(v, kind, id, ok, message, server, job, plan, value);
+        return new LinkMessage(v, kind, id, ok, message, server, job, plan, value, recording);
+    }
+
+    public LinkMessage withRecording(RecordingStatus value) {
+        return new LinkMessage(v, kind, id, ok, message, server, job, plan, source, value);
     }
 }

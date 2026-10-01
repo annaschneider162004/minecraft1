@@ -9,6 +9,7 @@ import com.annaschneider.minecraft1.link.LinkProtocol;
 import com.annaschneider.minecraft1.link.LinkRequest;
 import com.annaschneider.minecraft1.link.MessageKind;
 import com.annaschneider.minecraft1.link.PlanSummary;
+import com.annaschneider.minecraft1.link.RecordingStatus;
 import com.annaschneider.minecraft1.link.RequestType;
 import com.annaschneider.minecraft1.link.ServerInfo;
 
@@ -102,9 +103,14 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     private final PlanMapPanel mapPanel = new PlanMapPanel();
     private final JTextArea summaryArea = new JTextArea(6, 30);
     private final JButton buildButton = new JButton("Build in Minecraft");
+    private final JButton buildAndRecordButton = new JButton("Build + Record");
     private final JButton pauseButton = new JButton("Pause");
     private final JButton cancelButton = new JButton("Cancel");
     private final JButton undoButton = new JButton("Undo last build");
+    private final JButton startRecordButton = new JButton("Start Recording");
+    private final JButton stopRecordButton = new JButton("Stop & Save");
+    private final StatusDot recordingDot = new StatusDot();
+    private final JLabel recordingStatusLabel = new JLabel("Recording: Not connected");
     private final JProgressBar progressBar = new JProgressBar(0, 1000);
     private final JLabel noticeLabel = new JLabel(" ");
     private final JTextArea logArea = new JTextArea(7, 80);
@@ -113,6 +119,8 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     private String lastSuggestedName = "";
     private ServerInfo server;
     private JobStatus job;
+    private RecordingStatus recordingStatus;
+    private boolean autoStopRecordingOnJobComplete;
     private boolean busy;
     private boolean autoReconnect = true;
     private String lastConnectionMessage = "";
@@ -408,6 +416,11 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         makeLarge(buildButton, true);
         buildButton.setToolTipText("Start building at your position in the game.");
         buildButton.addActionListener(event -> build());
+
+        makeLarge(buildAndRecordButton, false);
+        buildAndRecordButton.setToolTipText("Start in-game recording (ReplayMod), then build automatically.");
+        buildAndRecordButton.addActionListener(event -> buildAndRecord());
+
         makeLarge(pauseButton, false);
         pauseButton.setToolTipText("Pause or resume the current build.");
         pauseButton.addActionListener(event -> simple(job != null && job.isPaused() ? RequestType.RESUME : RequestType.PAUSE));
@@ -430,6 +443,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             }
         });
         buttons.add(buildButton);
+        buttons.add(buildAndRecordButton);
         buttons.add(pauseButton);
         buttons.add(cancelButton);
         buttons.add(undoButton);
@@ -442,10 +456,35 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         noticeLabel.setFont(noticeLabel.getFont().deriveFont(Font.BOLD));
         status.add(noticeLabel, BorderLayout.SOUTH);
 
-        JPanel row = new JPanel(new BorderLayout(12, 0));
-        row.add(buttons, BorderLayout.WEST);
-        row.add(status, BorderLayout.CENTER);
-        panel.add(row, BorderLayout.CENTER);
+        JPanel mainRow = new JPanel(new BorderLayout(12, 0));
+        mainRow.add(buttons, BorderLayout.WEST);
+        mainRow.add(status, BorderLayout.CENTER);
+
+        // Recording controls section
+        JPanel recordBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        recordBar.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(1, 0, 0, 0, UIManager.getColor("Separator.foreground") == null
+                ? Color.LIGHT_GRAY : UIManager.getColor("Separator.foreground")),
+            BorderFactory.createEmptyBorder(4, 0, 0, 0)));
+        JLabel recordTitle = new JLabel("Recording:");
+        recordTitle.setFont(recordTitle.getFont().deriveFont(Font.BOLD));
+        recordBar.add(recordTitle);
+        recordBar.add(recordingDot);
+        recordBar.add(recordingStatusLabel);
+
+        startRecordButton.setToolTipText("Start recording with ReplayMod without OBS.");
+        startRecordButton.addActionListener(event -> startRecording());
+        stopRecordButton.setToolTipText("Stop recording and save the replay file.");
+        stopRecordButton.addActionListener(event -> stopRecording());
+
+        recordBar.add(startRecordButton);
+        recordBar.add(stopRecordButton);
+
+        JPanel combined = new JPanel(new BorderLayout(0, 6));
+        combined.add(mainRow, BorderLayout.CENTER);
+        combined.add(recordBar, BorderLayout.SOUTH);
+
+        panel.add(combined, BorderLayout.CENTER);
         return panel;
     }
 
@@ -460,7 +499,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         if (connection.state() == ArchitectConnection.State.DISCONNECTED && autoReconnect) {
             connect();
         } else if (connection.state() == ArchitectConnection.State.CONNECTED && !busy
-            && (server == null || server.player() == null)) {
+            && (server == null || server.player() == null || recordingStatus == null)) {
             connection.submit(client -> client.call(LinkRequest.of(RequestType.STATUS)), this::applyStatus, message -> { });
         }
     }
@@ -502,6 +541,79 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         }, result -> { });
     }
 
+    private void buildAndRecord() {
+        Selection selection = currentSelection();
+        if (selection == null) {
+            return;
+        }
+        if (recordingStatus != null && recordingStatus.recording()) {
+            build();
+            return;
+        }
+        if (recordingStatus != null && !recordingStatus.available()) {
+            notice("Recording unavailable (" + (recordingStatus.message() != null ? recordingStatus.message() : "ReplayMod not active") + "). Building normally.", false);
+            build();
+            return;
+        }
+        autoStopRecordingOnJobComplete = true;
+        runBusy("Starting recording before build...", client -> {
+            LinkMessage rec = client.call(LinkRequest.recordStart());
+            if (!rec.isOk()) {
+                return rec;
+            }
+            if (selection.mode() == BuildMode.TEMPLATE) {
+                return client.call(LinkRequest.build(BuildMode.TEMPLATE, selection.template()));
+            }
+            if (!selection.key().equals(plannedKey)) {
+                LinkMessage plan = ensurePlan(client, selection);
+                if (!plan.isOk()) {
+                    return plan;
+                }
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    showPlan(plan.plan());
+                    log(plan.message());
+                });
+            }
+            return client.call(LinkRequest.build(BuildMode.PLAN, selection.planName()));
+        }, result -> { });
+    }
+
+    private void startRecording() {
+        runBusy("Starting recording...", client -> client.call(LinkRequest.recordStart()), result -> { });
+    }
+
+    private void stopRecording() {
+        autoStopRecordingOnJobComplete = false;
+        runBusy("Stopping recording...", client -> client.call(LinkRequest.recordStop()), result -> { });
+    }
+
+    private void updateRecording(RecordingStatus status) {
+        if (status == null) {
+            return;
+        }
+        this.recordingStatus = status;
+        if (status.recording()) {
+            recordingDot.setColor(RED);
+            String desc = "Recording active" + (status.backend() != null ? " (" + status.backend() + ")" : "");
+            recordingStatusLabel.setText(desc);
+            recordingStatusLabel.setToolTipText(status.outputPath() != null ? "Output: " + status.outputPath() : "Recording in progress");
+        } else if (status.available()) {
+            recordingDot.setColor(GREEN);
+            String desc = "Ready (" + (status.backend() != null ? status.backend() : "ReplayMod") + ")";
+            if (status.outputPath() != null) {
+                desc += " - Saved: " + status.outputPath();
+            }
+            recordingStatusLabel.setText(desc);
+            recordingStatusLabel.setToolTipText(status.message() != null ? status.message() : "Recording backend ready");
+        } else {
+            recordingDot.setColor(Color.GRAY);
+            String msg = status.message() != null ? status.message() : "ReplayMod not detected";
+            recordingStatusLabel.setText("Recording unavailable (" + msg + ")");
+            recordingStatusLabel.setToolTipText(msg);
+        }
+        updateControls();
+    }
+
     private void simple(RequestType type) {
         runBusy(null, client -> client.call(LinkRequest.of(type)), result -> { });
     }
@@ -538,6 +650,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             finishBusy();
             if (result.job() != null) {
                 updateJob(result.job());
+            }
+            if (result.recording() != null) {
+                updateRecording(result.recording());
             }
             if (result.isOk()) {
                 notice(firstLine(result.message()), false);
@@ -695,6 +810,10 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             }
             case DISCONNECTED -> {
                 server = null;
+                recordingStatus = null;
+                recordingDot.setColor(Color.GRAY);
+                recordingStatusLabel.setText("Recording: Not connected");
+                recordingStatusLabel.setToolTipText(null);
                 statusDot.setColor(RED);
                 statusLabel.setText("Not connected - start Minecraft and open a world");
                 statusLabel.setToolTipText(message);
@@ -715,6 +834,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         } else if (message.message() != null) {
             log(message.message());
         }
+        if (message.recording() != null) {
+            updateRecording(message.recording());
+        }
     }
 
     private void applyStatus(LinkMessage status) {
@@ -727,6 +849,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         }
         if (status.job() != null) {
             updateJob(status.job());
+        }
+        if (status.recording() != null) {
+            updateRecording(status.recording());
         }
     }
 
@@ -777,6 +902,15 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         if (previous == null || previous.jobId() != status.jobId() || !previous.state().equals(status.state())) {
             log(status.describe());
         }
+        if (autoStopRecordingOnJobComplete && (status.state().equals("completed") || status.state().equals("cancelled") || status.state().equals("failed"))) {
+            autoStopRecordingOnJobComplete = false;
+            log("Build finished, stopping recording...");
+            connection.submit(client -> client.call(LinkRequest.recordStop()), result -> {
+                if (result.recording() != null) {
+                    updateRecording(result.recording());
+                }
+            }, error -> log("Could not stop recording: " + error));
+        }
         updateControls();
     }
 
@@ -792,12 +926,17 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         planNameField.setEnabled(!template);
         previewButton.setEnabled(connected && !busy && ready);
         buildButton.setEnabled(hasPlayer && !busy && ready && !active);
+        buildAndRecordButton.setEnabled(hasPlayer && !busy && ready && !active);
         pauseButton.setEnabled(hasPlayer && !busy && active);
         pauseButton.setText(job != null && job.isPaused() ? "Resume" : "Pause");
         cancelButton.setEnabled(hasPlayer && !busy && active && "build".equals(job.kind()));
         undoButton.setEnabled(hasPlayer && !busy && !active);
+        boolean isRecording = recordingStatus != null && recordingStatus.recording();
+        startRecordButton.setEnabled(hasPlayer && !busy && !isRecording && (recordingStatus == null || recordingStatus.available()));
+        stopRecordButton.setEnabled(hasPlayer && !busy && isRecording);
         String why = !connected ? "Connect to Minecraft first." : !hasPlayer ? "Open a world in Minecraft first." : null;
         buildButton.setToolTipText(why != null ? why : active ? "A build is already running." : "Start building at your position in the game.");
+        buildAndRecordButton.setToolTipText(why != null ? why : active ? "A build is already running." : "Start in-game recording, then build automatically.");
     }
 
     private void suggestName() {

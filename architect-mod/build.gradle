@@ -7,6 +7,8 @@ dependencies {
     implementation project(':ai-foundation')
     implementation project(':large-build')
     implementation project(':architect-link')
+    compileOnly project(':fabric-stubs')
+    testImplementation project(':fabric-stubs')
 }
 
 // Headless stand-in for Minecraft: runs the command engine and the desktop link against an in-memory world so the

@@ -4,6 +4,7 @@ import com.annaschneider.minecraft1.link.LinkInfo;
 import com.annaschneider.minecraft1.mod.command.ArchitectCommandEngine;
 import com.annaschneider.minecraft1.mod.link.DesktopBridge;
 import com.annaschneider.minecraft1.mod.link.PlayerDirectory;
+import com.annaschneider.minecraft1.mod.recording.ServerRecordingCoordinator;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -19,8 +20,12 @@ public final class ArchitectServerRuntime implements AutoCloseable {
     private String linkError;
 
     public ArchitectServerRuntime(Path dataRoot, PlayerDirectory players, String modVersion) {
+        this(dataRoot, players, modVersion, new ServerRecordingCoordinator(null));
+    }
+
+    public ArchitectServerRuntime(Path dataRoot, PlayerDirectory players, String modVersion, ServerRecordingCoordinator recordingCoordinator) {
         this.engine = new ArchitectCommandEngine(dataRoot);
-        this.bridge = new DesktopBridge(engine, players, modVersion);
+        this.bridge = new DesktopBridge(engine, players, modVersion, recordingCoordinator);
     }
 
     public ArchitectCommandEngine engine() {
@@ -29,6 +34,10 @@ public final class ArchitectServerRuntime implements AutoCloseable {
 
     public DesktopBridge bridge() {
         return bridge;
+    }
+
+    public ServerRecordingCoordinator recordingCoordinator() {
+        return bridge.recordingCoordinator();
     }
 
     /**
