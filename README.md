@@ -42,11 +42,11 @@ mod in real time over the **Architect Link protocol** (`architect-link`: JSON li
 
 ## Requirements
 
-- Java 17
-- Minecraft Java 1.20.1
-- Fabric Loader (>= 0.15.11)
-- Fabric API (included via Gradle)
-- Gradle (or wrapper)
+- Minecraft Java **1.20.1** with **Fabric Loader** (>= 0.16.10) and **Fabric API** for 1.20.1 (to play)
+- **JDK 25** to *build the mod jar* (Fabric Loom 1.18 runs only on JDK 25; the mod itself targets Java 17, the
+  version Minecraft 1.20.1 runs on)
+- JDK 17+ for everything else (desktop app, tests, demo server)
+- Gradle 9 (or the wrapper: `java -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain …`)
 
 ## Build & Test
 
@@ -63,21 +63,93 @@ gradle :architect-link:test :architect-desktop:test   # protocol/schema and desk
 This runs compilation and tests (JUnit). Dependencies come from Maven Central (JUnit, and Gson 2.10.1 which is also the
 version bundled with Minecraft 1.20.1).
 
-Output mod jar:
+### Two build modes of `architect-mod`
+
+| mode | when | what you get |
+|---|---|---|
+| **Fabric** | Gradle runs on **JDK 25** (default there) | Fabric Loom downloads Minecraft 1.20.1, yarn mappings, Fabric Loader and Fabric API, compiles against the real game and writes the **installable mod jar** |
+| **Headless** | Gradle runs on JDK 17–24, or `-Parchitect.stubs=true` | compiles against `fabric-stubs` (offline, nothing downloaded); tests and `runLinkDemo` work, **no mod jar** is produced (`:architect-mod:jar SKIPPED`) |
+
+Gradle prints `:architect-mod builds in headless mode …` when it is not building the real mod. Passing
+`-Parchitect.stubs=false` on an older JDK fails with an explanation instead of a cryptic class-version error.
+
+### Build the mod jar
+
+```bat
+rem Windows: point JAVA_HOME at a JDK 25 for this window only (adjust the folder to your install)
+set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-25.0.0-hotspot"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+java -version
+gradle :architect-mod:build
+```
+
+```bash
+# Linux/macOS
+JAVA_HOME=/path/to/jdk-25 gradle :architect-mod:build
+```
+
+The first run downloads Minecraft and the Fabric toolchain (a few hundred MB, several minutes). The jar to install is
 
 ```text
-architect-mod/build/libs/
+architect-mod/build/libs/architect-mod-2.0.0-fabric.jar
 ```
+
+It is remapped to Fabric's intermediary names (so it loads in a normal Fabric install) and contains every
+platform-neutral module (`large-build`, `architect-link`, …); Gson comes from Minecraft. Ignore
+`architect-mod/build/devlibs/` — those jars are for the development environment only. Versions are set in
+`gradle.properties` (`minecraft_version`, `yarn_mappings`, `loader_version`, `fabric_api_version`, `loom_version`).
 
 ## Run (development)
 
-Nền tảng hiện tại tập trung vào kiến trúc multi-module + logic deterministic có test.
-Mục `architect-mod` đã có `fabric.mod.json` và lớp `ArchitectFabricMod` làm điểm entry nền tảng cho runtime Fabric.
-Trong phiên bản foundation này, lệnh build chính là:
-
 ```bash
-gradle build
+gradle build                         # all modules + tests (headless on JDK 17, real Fabric build on JDK 25)
+gradle :architect-mod:runLinkDemo    # demo server: simulated world + player "DemoPlayer", no Minecraft needed
+gradle :architect-mod:runClient      # JDK 25 only: starts Minecraft 1.20.1 with the mod from source (Loom)
 ```
+
+On JDK 25, add `-Parchitect.stubs=true` to `runLinkDemo` to skip the Minecraft download.
+
+## Install in Minecraft 1.20.1 (Fabric) / Cài vào Minecraft thật
+
+1. **Fabric Loader:** run the Fabric installer from <https://fabricmc.net/use/installer/>, choose *Minecraft 1.20.1*,
+   click *Install*. The launcher now has a profile **fabric-loader-1.20.1**.
+2. **Fabric API:** download the Fabric API file for **1.20.1** (e.g. `fabric-api-0.92.x+1.20.1.jar`) from Modrinth or
+   CurseForge and put it into the `mods` folder: `%APPDATA%\.minecraft\mods` on Windows (`~/.minecraft/mods` on
+   Linux, `~/Library/Application Support/minecraft/mods` on macOS). Create the folder if it does not exist.
+3. **Architect:** copy `architect-mod/build/libs/architect-mod-2.0.0-fabric.jar` into the same `mods` folder.
+4. Start the **fabric-loader-1.20.1** profile and open (or create) a single-player world. The game log shows
+   `[Architect] Desktop link started on 127.0.0.1:47821` and the mod writes
+   `%APPDATA%\.minecraft\config\architect\desktop-link.json`.
+5. In chat: `/architect build house` — the house is built next to you over the next ticks; `/architect undo` removes
+   it. `/architect help` lists every command.
+6. Start the desktop app (see below). It finds the link file automatically and shows
+   **Connected to Minecraft - player <your name>**.
+
+Dedicated server: put the same two jars (Fabric API + Architect) into the server's `mods` folder. The link file is
+written to `<server>/config/architect/desktop-link.json` and accepts connections from the same machine only.
+
+**Real game or demo?** The status line of the app shows the player name. **`DemoPlayer`** means you are connected to
+`runLinkDemo` (an in-memory world, nothing appears in Minecraft): stop the demo and in **Settings…** set the link file
+back to the default `…\.minecraft\config\architect\desktop-link.json`. Your own Minecraft name means the real world.
+
+### Troubleshooting
+
+| Problem | Cause / fix |
+|---|---|
+| Minecraft says *requires fabric-api* / *Incompatible mods found* mentioning `fabric-api` | Fabric API is missing or for another version: install Fabric API **for 1.20.1** into `mods`. |
+| *Mod 'Minecraft AI Architect Suite' requires minecraft 1.20.1* | Wrong game version or profile: start the **fabric-loader-1.20.1** profile. |
+| The mod is not listed / `/architect` is unknown | The jar is not in the `mods` folder of the profile you start, or you copied a jar from `build/devlibs/` instead of `build/libs/`. |
+| Gradle: *Building the Fabric mod jar needs Gradle to run on JDK 25* or no jar in `build/libs` | Gradle runs on JDK 17 (headless mode). Set `JAVA_HOME` to a JDK 25 and build again. |
+| App: *No player is in a world yet* | The game is on the title screen, or (dedicated server) nobody is online. Join the world. With several players online the app acts for the alphabetically first one unless you enter your name in **Settings… → Player name**. |
+| App: *Minecraft did not answer in time*, builds stop | Single-player is **paused** (Esc menu or window lost focus): the integrated server does not tick, so nothing is built. Close the menu, press **F3 + P** to disable pause-on-lost-focus, or *Open to LAN*. |
+| App connects to `DemoPlayer` | You are on the demo, see *Real game or demo?* above. |
+| `/architect …` answers *Architect commands must be run by an in-game player* | It was run from the server console or a command block; run it as a player. |
+
+**Tóm tắt tiếng Việt:** build jar bằng JDK 25 (`gradle :architect-mod:build`) → chép
+`architect-mod\build\libs\architect-mod-2.0.0-fabric.jar` và Fabric API 1.20.1 vào `%APPDATA%\.minecraft\mods` →
+mở profile *fabric-loader-1.20.1* → vào world → gõ `/architect build house` hoặc mở app desktop: app hiện **tên nhân
+vật của bạn** (không phải `DemoPlayer`) là đã nối vào game thật. Game bị tạm dừng (Esc / chuyển cửa sổ) thì không xây —
+nhấn **F3 + P**.
 
 ## Commands (MVP)
 
@@ -169,12 +241,18 @@ Included unit tests:
 - `build-transformer`: deterministic transform behavior
 - `large-build`: section key packing/order, chunk partitioning, rotation/mirror (checked against the domain
   `Blueprint`), streamed procedural blueprints vs. brute force, build queue budgets/conflicts/limits/chunk waiting/
-  cancel/undo with disk-spilled journals, `.mcab` round-trip and corruption, JSON plan store, upload path safety and
+  cancel/undo with disk-spilled journals, jobs staying in the world they were started in, `.mcab` round-trip and corruption, JSON plan store, upload path safety and
   image header parsing, planner determinism and scaling (scale 16 > 10M blocks), NPC work partitioning, camera shots
 - `architect-mod`: legacy commands plus image plan/preview/build/cancel/undo, mega builds with rotation/mirror,
   export + saved blueprint build, pause/resume, and user-facing error messages; `DesktopBridge` end-to-end over a real
   socket (hello/token, missing player, prompt plan, picture upload, template preview, build/pause/resume/cancel/undo,
-  progress push, port fallback)
+  progress push, port fallback); `fabric.mod.json` (expanded version, dependencies, entrypoints) and a check that no
+  common class references client-only code. Headless mode additionally runs `src/stubTest`: the Fabric entrypoint
+  driven through stubbed Fabric events (hook registration, `/architect build house` placing blocks and undoing them,
+  console/failed commands as feedback, `desktop-link.json` in `<config>/architect` created on start and deleted on
+  stop, the desktop app seeing the real player name, fresh runtime after reopening a world, chunk tickets released on
+  completion and shutdown), `FabricBlockWorld` (ids, height/border limits, tickets, server-thread guard) and
+  `FabricPlayerDirectory` (named/single/multiple/no players, current world)
 - `architect-link`: request validation (ids, plan names, sources, prompt/scale limits, base64 image size, player
   names), JSON codec round-trips and lowercase wire names, link-file read/write, server/client handshake, wrong token,
   oversized lines, timeouts and connection-refused messages
@@ -297,36 +375,28 @@ uploads/<file>  ──ImageReferenceResolver──▶ ImageReference (validated,
   the implementation belongs in client-only or spectator-camera code). `/architect camera orbit` already plans a shot
   around the player's current/last build.
 
-### Wiring into Fabric (next step)
+### How the Fabric runtime is wired
 
-The engine only needs a `WorldAccess` and a tick call. The Fabric adapter (not included, see limitations) is expected to:
-
-- implement `ModInitializer` in `ArchitectFabricMod`, register `/architect` with `CommandRegistrationCallback`
-  (forwarding the raw command, the player UUID and block position to `ArchitectCommandEngine.execute`), and call
-  `engine.tick(world)` from `ServerTickEvents.END_SERVER_TICK`;
-- back `WorldAccess` with `ServerWorld`: map ids through `Registries.BLOCK`, place with `setBlockState(pos, state,
-  Block.NOTIFY_LISTENERS | Block.FORCE_STATE)` (skip neighbour updates for speed), and in `prepareChunk` add a chunk
-  ticket and return whether the chunk is loaded (never force a synchronous load); remove the ticket in `releaseChunk`;
-- close the engine on `ServerLifecycleEvents.SERVER_STOPPING`.
-
-For the desktop app, use `ArchitectServerRuntime` instead of a bare engine:
-
-```java
-// SERVER_STARTED
-runtime = new ArchitectServerRuntime(FabricLoader.getInstance().getConfigDir().resolve("architect"),
-        name -> /* look up the online ServerPlayerEntity by name (or the only player when name is null)
-                   and return new PlayerContext(uuid, name, worldAccessFor(player), blockPos) */ Optional.empty(),
-        modVersion);
-runtime.startLink();          // never throws; a busy port is reported by runtime.linkError()
-// END_SERVER_TICK (server thread)
-runtime.tick(worldAccess);    // runs desktop requests, the build queue and pushes progress
-// SERVER_STOPPING
-runtime.close();              // closes sockets and deletes desktop-link.json
-```
-
-Using `config/architect` as the data directory is what lets the desktop app find `desktop-link.json` without setup.
-All desktop requests are executed on the server thread through the same `ArchitectCommandEngine` as chat commands, so
-the link code contains no client-only classes and also works on a dedicated server.
+- `ArchitectFabricMod` (`main` entrypoint) registers `/architect [<command…>]` with `CommandRegistrationCallback` and
+  forwards the raw text, the player UUID, the player's current world and block position to
+  `ArchitectCommandEngine.execute`; failures become red chat feedback, never exceptions.
+- `ServerLifecycleEvents.SERVER_STARTING` creates one `ArchitectServerRuntime` per server (so per opened world) with
+  `<config>/architect` as data directory and starts the desktop link; `SERVER_STOPPING`/`SERVER_STOPPED` close it
+  (deleting `desktop-link.json`) and release every chunk ticket. Nothing is kept in static fields, so switching worlds
+  starts fresh.
+- `ServerTickEvents.END_SERVER_TICK` calls `runtime.tick(...)` once per tick: desktop requests, the build queue and
+  progress events all run on the server thread.
+- `FabricBlockWorld` backs `BlockWorld` with `ServerWorld`: ids are validated through `Registries.BLOCK` (clear errors
+  for malformed or unknown ids, positions outside the height range or world border), blocks are placed with
+  `setBlockState(pos, defaultState, Block.NOTIFY_ALL)` and mutations off the server thread are refused.
+  `prepareChunk` adds a `FORCED` chunk ticket and reports whether the chunk is loaded (no synchronous loading); tickets
+  are released when the section is done and on completion, cancel, pause, failure and shutdown.
+- Every build/undo job remembers the world it was started in, so it keeps building there even if its owner changes
+  dimension; the overworld is only the fallback for the tick call.
+- `FabricPlayerDirectory` resolves the desktop app's player through `server.getPlayerManager()`: the named player, the
+  only player online, or — with several players and no name — the alphabetically first one.
+- `ArchitectClientMod` (`client` entrypoint) only handles the optional ReplayMod recording channel; no common class
+  references client-only code, so dedicated servers start without it.
 
 ### Configuration (`-Darchitect.<name>=<value>`)
 
@@ -373,7 +443,8 @@ the link code contains no client-only classes and also works on a dedicated serv
 
 ### Connect to Minecraft
 
-1. Install the Architect mod in Minecraft 1.20.1 (Fabric) and start the game.
+1. Install the Architect mod in Minecraft 1.20.1 (Fabric) and start the game (see
+   [Install in Minecraft 1.20.1](#install-in-minecraft-1201-fabric--cài-vào-minecraft-thật)).
 2. Open a single-player world (or join the server where the mod runs). The mod listens on `127.0.0.1:47821` and writes
    `%APPDATA%\.minecraft\config\architect\desktop-link.json` (port + a random secret token, recreated each start).
 3. Start the app. The dot at the top turns **green – "Connected to Minecraft - player …"** within a few seconds. The app
@@ -471,9 +542,8 @@ gradle :architect-desktop:runWithDemo    & rem the app, connected to the demo
 - AI orchestration is local deterministic fallback only (full LLM-driven world-scale generation is future work).
 - Copy/paste selection from live world is not implemented yet (API readiness exists through structure operations and blueprint transforms).
 - The world generator is intentionally bounded to avoid server freeze and to keep results testable/reproducible.
-- **Fabric runtime adapter not wired yet.** The build does not apply Fabric Loom (the Fabric Maven was not reachable from
-  the development environment), so `architect-mod` compiles against the platform-neutral `BlockWorld`/`WorldAccess`
-  abstractions and the jar is not yet a loadable mod. See "Wiring into Fabric" for the remaining adapter.
+- Building the mod jar needs JDK 25 (a requirement of the current Fabric Loom); on older JDKs `architect-mod` builds in
+  headless mode (tests and demo only).
 - **Image-to-blueprint is heuristic.** Pixels are not analysed; the scene comes from the file hash, aspect ratio and
   file-name keywords. It will not reproduce a specific picture until an AI/CV provider is plugged in.
 - Plans are compiled and previewed synchronously when the command runs (sub-second even at scale 24); exports run in
@@ -482,6 +552,5 @@ gradle :architect-desktop:runWithDemo    & rem the app, connected to the demo
   and undo history (spilled journal files are left in `journals/`). Resume-after-restart is future work.
 - Undo restores block states only (no block entities/NBT); generators only emit plain blocks.
 - NPC and camera systems are interfaces and planning logic only; no entities are spawned and no camera is moved yet.
-- The desktop app talks to the mod through `ArchitectServerRuntime`; until the Fabric adapter above is wired, use
-  `gradle :architect-mod:runLinkDemo` (simulated world) to try the full app flow. The picture is uploaded to the mod but
-  analysed with the same heuristic planner (see above); the preview is a top-down region map, not a 3D render.
+- The picture uploaded from the desktop app is analysed with the same heuristic planner (see above); the preview is a
+  top-down region map, not a 3D render.
