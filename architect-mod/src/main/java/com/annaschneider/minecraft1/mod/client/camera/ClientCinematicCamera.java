@@ -60,6 +60,9 @@ public final class ClientCinematicCamera {
     public void onMode(MinecraftClient client, String json) {
         CameraPacket packet = CameraPacket.decode(json);
         CameraMode mode = packet.cameraMode();
+        if (mode == null) {
+            return;
+        }
         controller.requestMode(mode);
         if (!mode.isActive()) {
             restore(client);
