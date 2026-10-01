@@ -26,6 +26,11 @@ public final class BlockCatalog {
     private BlockCatalog() {
     }
 
+    /** Every block id the generators may place (all vanilla Minecraft 1.20.1 blocks). */
+    public static Set<String> supportedIds() {
+        return SUPPORTED;
+    }
+
     public static boolean isSupported(String blockId) {
         return SUPPORTED.contains(BlueprintValidation.requireBlockId(blockId));
     }

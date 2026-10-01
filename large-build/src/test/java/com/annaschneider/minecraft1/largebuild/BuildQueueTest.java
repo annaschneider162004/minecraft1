@@ -100,6 +100,24 @@ class BuildQueueTest {
     }
 
     @Test
+    void jobsKeepBuildingAndUndoingInTheWorldTheyStartedIn() {
+        BuildQueue queue = new BuildQueue(settings(4_096));
+        MapWorld nether = new MapWorld();
+        MapWorld overworld = new MapWorld();
+        UUID owner = UUID.randomUUID();
+        queue.submit(owner, cube(4, "stone"), new Vec3i(0, 0, 0), nether);
+        // the server ticks with another world (e.g. the owner walked through a portal)
+        runUntilIdle(queue, overworld, 100);
+        assertEquals(64, nether.blocks.size());
+        assertTrue(overworld.blocks.isEmpty());
+
+        queue.undoLast(owner);
+        runUntilIdle(queue, overworld, 100);
+        assertTrue(nether.blocks.isEmpty());
+        assertEquals(0, overworld.writes);
+    }
+
+    @Test
     void undoRestoresPreviousBlocksWithJournalSpilledToDisk(@TempDir Path journals) throws Exception {
         BuildSettings settings = BuildSettings.defaults().withBlocksPerTick(4_096).withJournal(1_024, journals);
         BuildQueue queue = new BuildQueue(settings);

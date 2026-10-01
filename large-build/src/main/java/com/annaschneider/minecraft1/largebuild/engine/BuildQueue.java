@@ -27,6 +27,7 @@ public final class BuildQueue {
     private final LinkedHashMap<UUID, Job> jobs = new LinkedHashMap<>();
     private final Map<UUID, UndoJournal> history = new HashMap<>();
     private final Map<UUID, String> historyNames = new HashMap<>();
+    private final Map<UUID, WorldAccess> historyWorlds = new HashMap<>();
     private final Map<UUID, JobProgress> lastFinished = new HashMap<>();
     private final List<BuildListener> listeners = new CopyOnWriteArrayList<>();
     private long nextId = 1;
@@ -63,6 +64,7 @@ public final class BuildQueue {
         }
         UndoJournal journal = new UndoJournal(settings.journalDirectory(), settings.journalMemoryEntries());
         BuildJob job = new BuildJob(nextId++, owner, source, origin, journal);
+        job.world = world;
         jobs.put(owner, job);
         return job.progress();
     }
@@ -76,6 +78,7 @@ public final class BuildQueue {
             throw new IllegalStateException("No completed build to undo.");
         }
         UndoJob job = new UndoJob(nextId++, owner, name, journal);
+        job.world = historyWorlds.remove(owner);
         jobs.put(owner, job);
         return job.progress();
     }
@@ -95,7 +98,7 @@ public final class BuildQueue {
         }
         job.state = JobState.CANCELLED;
         job.message = "cancelled by owner";
-        finish(job, world);
+        finish(job, job.worldOr(world));
         return Optional.of(job.progress());
     }
 
@@ -112,7 +115,7 @@ public final class BuildQueue {
             job.stateBeforePause = job.state;
             job.state = JobState.PAUSED;
             job.waitingForChunks = false;
-            job.releaseAll(world);
+            job.releaseAll(job.worldOr(world));
         }
         return Optional.of(job.progress());
     }
@@ -175,6 +178,8 @@ public final class BuildQueue {
         long changed = 0;
         int completed = 0;
         for (Job job : active) {
+            // each job keeps building in the world it was started in, even if its owner changed dimension since
+            WorldAccess target = job.worldOr(world);
             if (job.state == JobState.QUEUED) {
                 job.state = JobState.RUNNING;
                 Bounds bounds = job instanceof BuildJob build ? build.worldBounds() : null;
@@ -186,7 +191,7 @@ public final class BuildQueue {
             boolean done;
             try {
                 job.ticks++;
-                done = job.step(world, new TickBudget(blocks, sections, deadline), this);
+                done = job.step(target, new TickBudget(blocks, sections, deadline), this);
             } catch (RuntimeException ex) {
                 job.state = JobState.FAILED;
                 job.message = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
@@ -197,7 +202,7 @@ public final class BuildQueue {
                 if (job.state == JobState.RUNNING) {
                     job.state = JobState.COMPLETED;
                 }
-                finish(job, world);
+                finish(job, target);
                 completed++;
             }
         }
@@ -222,6 +227,7 @@ public final class BuildQueue {
             journal.seal();
             UndoJournal previous = history.put(job.owner, journal);
             historyNames.put(job.owner, job.name);
+            historyWorlds.put(job.owner, job.world);
             if (previous != null) {
                 previous.discard();
             }
@@ -231,6 +237,7 @@ public final class BuildQueue {
             } else {
                 history.put(job.owner, undo.journal());
                 historyNames.put(job.owner, job.name.replaceFirst("^undo ", ""));
+                historyWorlds.put(job.owner, job.world);
             }
         }
         JobProgress progress = job.progress();

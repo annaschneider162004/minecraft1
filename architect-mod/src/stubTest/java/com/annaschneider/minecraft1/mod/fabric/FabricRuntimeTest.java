@@ -39,6 +39,7 @@ public class FabricRuntimeTest {
     void fabricBlockWorldPlacesAndRetrievesBlocks() {
         FabricBlockWorld blockWorld = new FabricBlockWorld(world);
         Vec3i pos = new Vec3i(10, 64, 20);
+        assertTrue(blockWorld.prepareChunk(pos.x() >> 4, pos.z() >> 4), "the chunk ticket loads the chunk");
 
         blockWorld.setBlock(pos, "minecraft:stone");
         assertEquals("minecraft:stone", blockWorld.getBlock(pos));
@@ -55,23 +56,29 @@ public class FabricRuntimeTest {
         // Outside height bounds (-64 to 320)
         Vec3i below = new Vec3i(0, -100, 0);
         Vec3i above = new Vec3i(0, 400, 0);
-        blockWorld.setBlock(below, "minecraft:stone");
-        blockWorld.setBlock(above, "minecraft:stone");
-        assertEquals("minecraft:air", blockWorld.getBlock(below));
-        assertEquals("minecraft:air", blockWorld.getBlock(above));
+        assertThrows(IllegalArgumentException.class, () -> blockWorld.setBlock(below, "minecraft:stone"));
+        assertThrows(IllegalArgumentException.class, () -> blockWorld.setBlock(above, "minecraft:stone"));
+        assertEquals("minecraft:void_air", blockWorld.getBlock(below));
+        assertEquals("minecraft:void_air", blockWorld.getBlock(above));
 
         // Outside world border
         Vec3i outsideBorder = new Vec3i(40_000_000, 64, 0);
-        blockWorld.setBlock(outsideBorder, "minecraft:stone");
-        assertEquals("minecraft:air", blockWorld.getBlock(outsideBorder));
+        assertThrows(IllegalArgumentException.class, () -> blockWorld.setBlock(outsideBorder, "minecraft:stone"));
+        assertEquals("minecraft:void_air", blockWorld.getBlock(outsideBorder));
     }
 
     @Test
-    void fabricBlockWorldHandlesInvalidBlockIdsGracefully() {
+    void fabricBlockWorldRejectsInvalidBlockIdsWithClearErrors() {
         FabricBlockWorld blockWorld = new FabricBlockWorld(world);
         Vec3i pos = new Vec3i(5, 64, 5);
 
-        blockWorld.setBlock(pos, "invalid_mod:non_existent_block_xyz");
+        IllegalArgumentException unknown = assertThrows(IllegalArgumentException.class,
+            () -> blockWorld.setBlock(pos, "invalid_mod:non_existent_block_xyz"));
+        assertTrue(unknown.getMessage().contains("Unknown block"), unknown.getMessage());
+        IllegalArgumentException malformed = assertThrows(IllegalArgumentException.class,
+            () -> blockWorld.setBlock(pos, "Not A Block!"));
+        assertTrue(malformed.getMessage().contains("Invalid block identifier"), malformed.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> blockWorld.setBlock(pos, " "));
         assertEquals("minecraft:air", blockWorld.getBlock(pos));
     }
 
@@ -107,6 +114,44 @@ public class FabricRuntimeTest {
         assertEquals("Alice", context.get().name());
         assertEquals(player.getUuid(), context.get().id());
         assertEquals(new Vec3i(0, 64, 0), context.get().position());
+    }
+
+    @Test
+    void playerDirectoryReturnsEmptyWhenNobodyIsOnlineOrNameIsUnknown() {
+        FabricPlayerDirectory directory = new FabricPlayerDirectory(server);
+        assertTrue(directory.find("Nobody").isEmpty());
+
+        server.getPlayerManager().removePlayer(player);
+        assertTrue(directory.find(null).isEmpty());
+    }
+
+    @Test
+    void playerDirectoryUsesThePlayersCurrentWorld() {
+        ServerWorld nether = new ServerWorld(server, World.NETHER);
+        server.addWorld(World.NETHER, nether);
+        ServerPlayerEntity traveller = new ServerPlayerEntity(server, nether, UUID.randomUUID(), "Traveller");
+        server.getPlayerManager().addPlayer(traveller);
+
+        FabricPlayerDirectory directory = new FabricPlayerDirectory(server);
+        PlayerContext context = directory.find("Traveller").orElseThrow();
+        assertSame(nether, ((FabricBlockWorld) context.world()).serverWorld());
+        assertSame(directory.worldAdapter(nether), context.world(), "one adapter per world keeps chunk tickets together");
+    }
+
+    @Test
+    void fabricBlockWorldRefusesWorldChangesOffTheServerThread() throws Exception {
+        FabricBlockWorld blockWorld = new FabricBlockWorld(world);
+        Throwable[] failure = new Throwable[1];
+        Thread other = new Thread(() -> {
+            try {
+                blockWorld.setBlock(new Vec3i(0, 64, 0), "minecraft:stone");
+            } catch (Throwable ex) {
+                failure[0] = ex;
+            }
+        });
+        other.start();
+        other.join();
+        assertInstanceOf(IllegalStateException.class, failure[0]);
     }
 
     @Test
@@ -150,7 +195,7 @@ public class FabricRuntimeTest {
 
         // Build completed should trigger auto-stop
         JobProgress job = new JobProgress(1, player.getUuid(), "house", JobKind.BUILD, JobState.COMPLETED, 10, 10, 100, 0, 5, false, null);
-        coordinator.onJobFinished(job);
+        coordinator.buildListener().onJobFinished(job);
         RecordingStatus stopped = coordinator.getStatus(player.getUuid());
         assertFalse(stopped.recording());
     }
