@@ -70,8 +70,17 @@ class ArchitectLargeBuildCommandsTest {
         engine.tick(world);
         assertTrue(run("/architect progress").message().contains("running"));
         assertTrue(run("/architect queue").message().contains("scene-dream"));
+        assertFalse(run("/architect resume").message().contains("paused"));
+        CommandResult pause = run("/architect pause");
+        assertTrue(pause.success(), pause.message());
+        assertTrue(pause.message().contains("paused"), pause.message());
+        assertEquals(0, engine.tick(world).progressedBlocks());
+        CommandResult resume = run("/architect resume");
+        assertTrue(resume.success(), resume.message());
+        assertTrue(resume.message().contains("running"), resume.message());
         assertTrue(run("/architect cancel").success());
         assertFalse(run("/architect cancel").success());
+        assertFalse(run("/architect pause").success());
 
         assertTrue(run("/architect undo").success());
         tickUntilIdle();

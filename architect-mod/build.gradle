@@ -6,4 +6,15 @@ dependencies {
     implementation project(':world-generator')
     implementation project(':ai-foundation')
     implementation project(':large-build')
+    implementation project(':architect-link')
+}
+
+// Headless stand-in for Minecraft: runs the command engine and the desktop link against an in-memory world so the
+// desktop app can be tried (and tested) without starting the game.
+tasks.register('runLinkDemo', JavaExec) {
+    group = 'application'
+    description = 'Runs the desktop link against a simulated in-memory Minecraft world.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.annaschneider.minecraft1.mod.link.LinkDemoServer'
+    standardInput = System.in
 }

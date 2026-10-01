@@ -20,6 +20,11 @@ với giới hạn block/section/thời gian mỗi tick, có tiến độ, huỷ
 dạng JSON và blueprint dạng file nén `.mcab`. Có pipeline **ảnh → scene plan → blueprint** (bản MVP dùng heuristic,
 chưa phân tích pixel) và các interface sẵn cho **nhiều NPC cùng xây** và **camera cinematic**.
 
+**Mới: app Windows "Minecraft Architect" (giao diện dễ dùng).** Mở app → nhập mô tả, chọn ảnh hoặc chọn mẫu →
+bấm **Preview** để xem sơ đồ → bấm **Build in Minecraft**; có nút **Pause / Cancel / Undo**, thanh tiến độ và nhật ký.
+App tự kết nối với mod qua mạng nội bộ của máy (127.0.0.1, có mã bảo mật), không cần tài khoản hay API key.
+Xem hướng dẫn tiếng Việt ở mục [Desktop app for Windows](#desktop-app-for-windows--ứng-dụng-windows).
+
 ---
 
 ## 🇬🇧 Summary
@@ -27,6 +32,11 @@ chưa phân tích pixel) và các interface sẵn cho **nhiều NPC cùng xây**
 This repository is rewritten to a **Fabric 1.20.1 multi-module foundation** for the seven-level Minecraft AI Architect Suite roadmap.
 
 The current MVP is **offline, deterministic, and bounded**, with no API key required and no network calls by default.
+
+A **Windows desktop companion app** (`architect-desktop`, Java Swing with the native Windows look) lets non-technical
+users type a prompt, pick a picture or a template, preview the plan and start/pause/cancel/undo builds. It talks to the
+mod in real time over the **Architect Link protocol** (`architect-link`: JSON lines over a token-protected TCP socket on
+`127.0.0.1` only). See [Desktop app for Windows](#desktop-app-for-windows--ứng-dụng-windows).
 
 ---
 
@@ -47,6 +57,7 @@ root:
 java -version   # must report 17
 gradle build    # compiles every module and runs all JUnit tests
 gradle :large-build:test :architect-mod:test   # only the large-build engine and command tests
+gradle :architect-link:test :architect-desktop:test   # protocol/schema and desktop input validation
 ```
 
 This runs compilation and tests (JUnit). Dependencies come from Maven Central (JUnit, and Gson 2.10.1 which is also the
@@ -86,6 +97,7 @@ gradle build
 - `/architect blueprint list`
 - `/architect blueprint build <name>`
 - `/architect queue` / `/architect progress` / `/architect cancel`
+- `/architect pause` / `/architect resume` (a paused build keeps its place, stops placing blocks and releases its chunk tickets)
 - `/architect undo`
 - `/architect camera <orbit|flyby|top-down|reveal> [seconds]`
 - `/architect help`
@@ -134,7 +146,11 @@ minecraft1/
 │   ├── persistence/       #   JSON plan store, compact .mcab blueprint codec/store
 │   ├── npc/               #   multi-agent interfaces + work partitioner (future NPC builders)
 │   └── camera/            #   camera paths, shot planner, recorder interface (future cinematic camera)
-└── architect-mod/         # Fabric entrypoint, /architect commands wired to the large-build engine
+├── architect-link/        # Architect Link protocol v1: shared request/response schema, validation, localhost server/client
+├── architect-mod/         # Fabric entrypoint, /architect commands wired to the large-build engine
+│   ├── link/              #   DesktopBridge (desktop requests -> commands, progress push), headless LinkDemoServer
+│   └── runtime/           #   ArchitectServerRuntime (engine + bridge lifecycle for the Fabric adapter), config
+└── architect-desktop/     # Windows desktop companion app (Swing), talks to the mod via architect-link
 ```
 
 ## Key Technical Notes
@@ -156,7 +172,14 @@ Included unit tests:
   cancel/undo with disk-spilled journals, `.mcab` round-trip and corruption, JSON plan store, upload path safety and
   image header parsing, planner determinism and scaling (scale 16 > 10M blocks), NPC work partitioning, camera shots
 - `architect-mod`: legacy commands plus image plan/preview/build/cancel/undo, mega builds with rotation/mirror,
-  export + saved blueprint build, and user-facing error messages
+  export + saved blueprint build, pause/resume, and user-facing error messages; `DesktopBridge` end-to-end over a real
+  socket (hello/token, missing player, prompt plan, picture upload, template preview, build/pause/resume/cancel/undo,
+  progress push, port fallback)
+- `architect-link`: request validation (ids, plan names, sources, prompt/scale limits, base64 image size, player
+  names), JSON codec round-trips and lowercase wire names, link-file read/write, server/client handshake, wrong token,
+  oversized lines, timeouts and connection-refused messages
+- `architect-desktop`: plan-name suggestion/validation, picture checks (type, empty, too large), safe upload names and
+  default link-file locations on Windows/macOS/Linux
 
 ## Large-build engine (multi-million-block builds)
 
@@ -286,6 +309,25 @@ The engine only needs a `WorldAccess` and a tick call. The Fabric adapter (not i
   ticket and return whether the chunk is loaded (never force a synchronous load); remove the ticket in `releaseChunk`;
 - close the engine on `ServerLifecycleEvents.SERVER_STOPPING`.
 
+For the desktop app, use `ArchitectServerRuntime` instead of a bare engine:
+
+```java
+// SERVER_STARTED
+runtime = new ArchitectServerRuntime(FabricLoader.getInstance().getConfigDir().resolve("architect"),
+        name -> /* look up the online ServerPlayerEntity by name (or the only player when name is null)
+                   and return new PlayerContext(uuid, name, worldAccessFor(player), blockPos) */ Optional.empty(),
+        modVersion);
+runtime.startLink();          // never throws; a busy port is reported by runtime.linkError()
+// END_SERVER_TICK (server thread)
+runtime.tick(worldAccess);    // runs desktop requests, the build queue and pushes progress
+// SERVER_STOPPING
+runtime.close();              // closes sockets and deletes desktop-link.json
+```
+
+Using `config/architect` as the data directory is what lets the desktop app find `desktop-link.json` without setup.
+All desktop requests are executed on the server thread through the same `ArchitectCommandEngine` as chat commands, so
+the link code contains no client-only classes and also works on a dedicated server.
+
 ### Configuration (`-Darchitect.<name>=<value>`)
 
 | property | default | range |
@@ -298,6 +340,121 @@ The engine only needs a `WorldAccess` and a tick call. The Fabric adapter (not i
 | `maxExportSections` | 1,000,000 | 1..4,000,000 |
 | `maxImageScale` | 16 | 1..24 |
 | `dataDir` | temp dir | any writable directory |
+| `link` | true | `false` disables the desktop link |
+| `linkPort` | 47821 | 1024..65535 (the next free port is used if busy) |
+
+## Desktop app for Windows / Ứng dụng Windows
+
+### Technology choice
+
+| Part | Choice | Why |
+|---|---|---|
+| Desktop UI | **Java 17 + Swing** with the native Windows look-and-feel (`architect-desktop`) | Same language, JDK and Gradle build as the mod; no extra UI framework or Node/Rust/.NET toolchain; reuses the shared protocol classes directly; packaged into a normal Windows program with `jpackage` (bundled Java runtime). |
+| Connection | **Architect Link protocol v1** over **TCP on 127.0.0.1** (`architect-link`) | Real-time two-way (requests + pushed progress), no HTTP/WebSocket library to shade into the mod, never reachable from other computers. |
+| Schema | Java records serialised with **Gson 2.10.1** (the version Minecraft 1.20.1 already ships) | One source of truth used by both the mod and the app, validated on both sides. |
+
+### Install and launch (Windows)
+
+1. Install **Java 17** (e.g. *Eclipse Temurin 17* from adoptium.net, choose "Add to PATH") and **Gradle 8+** — or skip
+   both and use a packaged build (step 4).
+2. Download the repository (green **Code → Download ZIP** on GitHub, then extract) or `git clone` it.
+3. Open **Command Prompt** in the extracted folder and run:
+   ```bat
+   gradle :architect-desktop:installDist
+   architect-desktop\build\install\architect-desktop\bin\architect-desktop.bat
+   ```
+   The **Minecraft Architect** window opens. Create a desktop shortcut to that `.bat` file for one-click start.
+4. *(Optional, for sharing with friends)* build a stand-alone program that does not need Java installed:
+   ```bat
+   gradle :architect-desktop:packageApp
+   ```
+   Copy the folder `architect-desktop\build\jpackage\Minecraft Architect\` anywhere and double-click
+   **Minecraft Architect.exe**. (`jpackage` comes with the JDK 17; it builds for the OS it runs on.)
+
+### Connect to Minecraft
+
+1. Install the Architect mod in Minecraft 1.20.1 (Fabric) and start the game.
+2. Open a single-player world (or join the server where the mod runs). The mod listens on `127.0.0.1:47821` and writes
+   `%APPDATA%\.minecraft\config\architect\desktop-link.json` (port + a random secret token, recreated each start).
+3. Start the app. The dot at the top turns **green – "Connected to Minecraft - player …"** within a few seconds. The app
+   retries automatically every 5 seconds, so the order of starting does not matter.
+4. **Pause game tip:** single-player Minecraft pauses when its window loses focus, which also pauses building. Press
+   **F3 + P** in game (disables pause-on-lost-focus) or use *Open to LAN* before switching to the app.
+
+Other launchers (CurseForge, Prism, MultiMC, Modrinth): open **Settings…** in the app and choose
+`<instance folder>\config\architect\desktop-link.json` with **Browse…**. On a server with several players enter your
+Minecraft name in **Player name**. Settings are remembered.
+
+| What you see | What to do |
+|---|---|
+| *Minecraft is not running or the Architect mod is not loaded* (grey/red dot) | Start Minecraft with the mod and open a world; check the link-file path in **Settings…**. |
+| *No player is in a world yet* (orange dot) | Enter a world. You can already prepare plans and previews. |
+| *Minecraft did not answer in time* | The game is paused — press **F3 + P** or open to LAN. |
+| *Connection refused / token rejected* | Minecraft was restarted; the app reconnects by itself with the new token. |
+| Port 47821 is used by another program | The mod uses the next free port automatically; the app reads it from the link file. Or set `-Darchitect.linkPort=<port>` in the launcher's JVM arguments. |
+
+### How to use (UI flow)
+
+```text
+┌───────────────────────────────────────────────────────────────┐
+│ ● Connected to Minecraft - player Anna   [Disconnect][Settings][Help] │
+├──────────── 1. What do you want to build? ──┬── 2. Preview ─────┤
+│ [Describe it] [From a picture] [Template]   │  top-down map of  │
+│  prompt text / drag&drop picture / list     │  regions, legend, │
+│ Size: ──●────── (scale 1..16, block estimate)│  "+" = you        │
+│ Name: white-palace          [ Preview ]     │  plan summary text│
+├──────────── 3. Build it in Minecraft ───────┴───────────────────┤
+│ [Build in Minecraft] [Pause/Resume] [Cancel] [Undo last build]  │
+│ ████████░░░░ 42% (running)          notice line                 │
+├──────────── Activity log ───────────────────────────────────────┤
+└───────────────────────────────────────────────────────────────┘
+```
+
+1. **Describe it** – type e.g. *white palace with waterfalls, bridges and cherry trees* (keywords shape the layout), or
+   **From a picture** – drag a PNG/JPG/GIF/WebP (≤ 8 MiB) onto the box or click *Choose picture…*, or **Template** –
+   house, castle, temple, village.
+2. Move **Size** (bigger = more blocks; the label shows an estimate) and keep or change the plan **Name**.
+3. **Preview** – the app uploads the picture if needed, asks the mod to create the plan and draws a top-down map with
+   the plan summary (size, sections, estimated blocks). Nothing is placed yet.
+4. **Build in Minecraft** – builds at your current position (large plans snap to the chunk grid). The progress bar
+   and log update live. **Pause/Resume** stops and continues, **Cancel** stops for good (placed blocks stay and can be
+   undone), **Undo last build** restores the previous blocks. Cancel and Undo ask for confirmation.
+
+Everything works offline; no account or API key is needed. Try it without Minecraft (two terminals):
+
+```bat
+gradle :architect-mod:runLinkDemo        & rem simulated server + player "DemoPlayer" (in-memory world)
+gradle :architect-desktop:runWithDemo    & rem the app, connected to the demo
+```
+
+### Hướng dẫn nhanh (tiếng Việt)
+
+1. Cài **Java 17** (Temurin 17) và **Gradle**, tải repo về (Code → Download ZIP) rồi giải nén.
+2. Mở **Command Prompt** trong thư mục repo, chạy `gradle :architect-desktop:installDist`, rồi nhấp đúp
+   `architect-desktop\build\install\architect-desktop\bin\architect-desktop.bat` (có thể tạo shortcut ra Desktop).
+   Muốn có file **Minecraft Architect.exe** chạy không cần cài Java: `gradle :architect-desktop:packageApp`.
+3. Mở Minecraft 1.20.1 có mod Architect, vào thế giới. App tự kết nối (chấm **xanh lá**). Nhấn **F3 + P** trong game
+   để game không tự tạm dừng khi chuyển sang app.
+4. Chọn **Describe it** (gõ mô tả), **From a picture** (kéo thả ảnh) hoặc **Template** (mẫu có sẵn) → chỉnh **Size**
+   → bấm **Preview** để xem sơ đồ → bấm **Build in Minecraft**. Dùng **Pause/Resume**, **Cancel**, **Undo last build**
+   khi cần; theo dõi thanh tiến độ và nhật ký ở dưới.
+5. Dùng launcher khác (CurseForge, Prism…)? Bấm **Settings…** và chọn file
+   `<thư mục instance>\config\architect\desktop-link.json`.
+
+### Architect Link protocol v1
+
+- Transport: one JSON object per line (UTF-8, `\n`) over TCP, bound to the loopback address only.
+- Discovery: the mod writes `desktop-link.json` = `{"protocol":1,"host":"127.0.0.1","port":47821,"token":"<48 hex>","modVersion":"…"}`
+  into its data directory (owner-only permissions where supported) and deletes it on shutdown.
+- Handshake: the first request must be `hello` with the token (checked in constant time) within 10 s, otherwise the
+  connection is closed. At most 4 desktop connections.
+- Requests (`LinkRequest`): `{"v":1,"id":"7","type":"plan","prompt":"white palace","planId":"white-palace","scale":2}`.
+  Types: `hello`, `status`, `upload_image` (`fileName`, base64 `data` ≤ 8 MiB), `plan` (`source` or `prompt`, `planId`,
+  `scale`), `preview` / `build` (`mode` = `template`|`plan`, `template` or `planId`), `pause`, `resume`, `cancel`, `undo`.
+- Messages (`LinkMessage`): `kind` = `response` (same `id`, `ok`, `message`, optional `server`, `plan`, `job`, `source`),
+  `progress` (pushed `job` status: state, percent, sections, blocks changed) or `log`.
+- Every request is validated by `RequestValidator` on both sides and executed on the server thread through the regular
+  `/architect` command engine, so the desktop app can do exactly what chat commands can do, and nothing more.
 
 ## Roadmap Mapping Status
 
@@ -325,3 +482,6 @@ The engine only needs a `WorldAccess` and a tick call. The Fabric adapter (not i
   and undo history (spilled journal files are left in `journals/`). Resume-after-restart is future work.
 - Undo restores block states only (no block entities/NBT); generators only emit plain blocks.
 - NPC and camera systems are interfaces and planning logic only; no entities are spawned and no camera is moved yet.
+- The desktop app talks to the mod through `ArchitectServerRuntime`; until the Fabric adapter above is wired, use
+  `gradle :architect-mod:runLinkDemo` (simulated world) to try the full app flow. The picture is uploaded to the mod but
+  analysed with the same heuristic planner (see above); the preview is a top-down region map, not a 3D render.

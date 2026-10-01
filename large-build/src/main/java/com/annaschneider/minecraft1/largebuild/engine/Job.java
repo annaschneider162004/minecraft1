@@ -16,6 +16,7 @@ abstract class Job {
     long ticks;
     boolean waitingForChunks;
     String message = "";
+    JobState stateBeforePause;
     private final List<Long> heldChunks = new ArrayList<>(4);
 
     Job(long id, UUID owner, String name, JobKind kind) {

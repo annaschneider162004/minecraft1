@@ -1,6 +1,7 @@
 package com.annaschneider.minecraft1.mod.runtime;
 
 import com.annaschneider.minecraft1.largebuild.engine.BuildSettings;
+import com.annaschneider.minecraft1.link.LinkProtocol;
 
 import java.nio.file.Path;
 
@@ -15,6 +16,9 @@ public final class ArchitectConfig {
     public static final int MAX_CONCURRENT_JOBS = clamp(Integer.getInteger("architect.maxConcurrentJobs", 2), 1, 16);
     public static final int MAX_EXPORT_SECTIONS = clamp(Integer.getInteger("architect.maxExportSections", 1_000_000), 1, 4_000_000);
     public static final int MAX_IMAGE_SCALE = clamp(Integer.getInteger("architect.maxImageScale", 16), 1, 24);
+    /** Whether the desktop app link (127.0.0.1 only) is started. */
+    public static final boolean LINK_ENABLED = Boolean.parseBoolean(System.getProperty("architect.link", "true"));
+    public static final int LINK_PORT = clamp(Integer.getInteger("architect.linkPort", LinkProtocol.DEFAULT_PORT), 1024, 65_535);
 
     private ArchitectConfig() {
     }

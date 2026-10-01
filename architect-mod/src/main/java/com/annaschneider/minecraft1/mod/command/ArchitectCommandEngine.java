@@ -118,6 +118,11 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         return queue;
     }
 
+    /** Loads a saved scene plan (throws {@link IllegalArgumentException} with a user-facing message if missing). */
+    public ScenePlan loadPlan(String planId) {
+        return plans.load(planId);
+    }
+
     public CommandResult execute(UUID playerId, BlockWorld world, String rawCommand) {
         return execute(playerId, world, DEFAULT_ORIGIN, rawCommand);
     }
@@ -150,6 +155,8 @@ public final class ArchitectCommandEngine implements AutoCloseable {
                 case "blueprint" -> handleBlueprint(playerId, world, origin, args);
                 case "queue" -> handleQueue();
                 case "progress" -> handleProgress(playerId);
+                case "pause" -> handlePause(playerId, world);
+                case "resume" -> handleResume(playerId);
                 case "cancel" -> handleCancel(playerId, world);
                 case "undo" -> handleUndo(playerId);
                 case "camera" -> handleCamera(playerId, args);
@@ -362,6 +369,18 @@ public final class ArchitectCommandEngine implements AutoCloseable {
             .orElseGet(() -> new CommandResult(false, "You have no builds yet."));
     }
 
+    private CommandResult handlePause(UUID playerId, BlockWorld world) {
+        return queue.pause(playerId, new BlockWorldAccess(world))
+            .map(progress -> new CommandResult(true, "Paused " + progress.describe() + ". Use /architect resume to continue."))
+            .orElseGet(() -> new CommandResult(false, "Nothing to pause."));
+    }
+
+    private CommandResult handleResume(UUID playerId) {
+        return queue.resume(playerId)
+            .map(progress -> new CommandResult(true, "Resumed " + progress.describe() + "."))
+            .orElseGet(() -> new CommandResult(false, "Nothing to resume."));
+    }
+
     private CommandResult handleCancel(UUID playerId, BlockWorld world) {
         Optional<JobProgress> cancelled = queue.cancel(playerId, new BlockWorldAccess(world));
         return cancelled
@@ -505,6 +524,8 @@ public final class ArchitectCommandEngine implements AutoCloseable {
                 "/architect blueprint build <name>",
                 "/architect queue",
                 "/architect progress",
+                "/architect pause",
+                "/architect resume",
                 "/architect cancel",
                 "/architect undo",
                 "/architect camera <orbit|flyby|top-down|reveal> [seconds]",

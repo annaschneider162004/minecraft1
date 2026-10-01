@@ -10,6 +10,11 @@ subprojects {
         toolchain.languageVersion = JavaLanguageVersion.of(17)
     }
 
+    tasks.withType(JavaCompile).configureEach {
+        // Windows defaults to a legacy code page; sources are UTF-8.
+        options.encoding = 'UTF-8'
+    }
+
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
     }
