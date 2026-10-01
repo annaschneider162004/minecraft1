@@ -21,5 +21,7 @@ public enum RequestType {
     @SerializedName("undo") UNDO,
     @SerializedName("record_start") RECORD_START,
     @SerializedName("record_stop") RECORD_STOP,
-    @SerializedName("record_status") RECORD_STATUS
+    @SerializedName("record_status") RECORD_STATUS,
+    /** Switches the cinematic camera mode and/or toggles the visible builder NPCs. */
+    @SerializedName("camera") CAMERA
 }

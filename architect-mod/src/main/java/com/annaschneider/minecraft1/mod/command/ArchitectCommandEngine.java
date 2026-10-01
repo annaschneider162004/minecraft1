@@ -14,6 +14,7 @@ import com.annaschneider.minecraft1.largebuild.blueprint.BlueprintSource;
 import com.annaschneider.minecraft1.largebuild.blueprint.ProceduralBlueprint;
 import com.annaschneider.minecraft1.largebuild.blueprint.SectionedBlueprint;
 import com.annaschneider.minecraft1.largebuild.camera.BuildCameraDirector;
+import com.annaschneider.minecraft1.largebuild.camera.CameraMode;
 import com.annaschneider.minecraft1.largebuild.camera.CameraPath;
 import com.annaschneider.minecraft1.largebuild.camera.DeterministicShotPlanner;
 import com.annaschneider.minecraft1.largebuild.camera.ShotType;
@@ -59,6 +60,20 @@ import java.util.concurrent.TimeUnit;
  * thread (except blueprint export, which runs on a background thread and only touches files).
  */
 public final class ArchitectCommandEngine implements AutoCloseable {
+    /** Live cinematic camera of one client; supplied by the Fabric adapter, absent in headless tests. */
+    public interface CameraControl {
+        String setMode(UUID playerId, CameraMode mode);
+
+        String describe(UUID playerId);
+    }
+
+    /** Visible builder NPCs; supplied by the Fabric adapter, absent in headless tests. */
+    public interface CrewControl {
+        String setEnabled(boolean enabled);
+
+        String describe();
+    }
+
     public static final Vec3i DEFAULT_ORIGIN = new Vec3i(0, 1, 0);
     private static final int STRUCTURE_MAX_BLOCKS = 10_000;
     private static final int KINGDOM_RADIUS = 24;
@@ -77,6 +92,8 @@ public final class ArchitectCommandEngine implements AutoCloseable {
     private final ImageToBlueprintPipeline pipeline;
     private final BuildCameraDirector camera = new BuildCameraDirector(new DeterministicShotPlanner());
     private final Map<UUID, String> loadedPlans = new HashMap<>();
+    private CameraControl cameraControl;
+    private CrewControl crewControl;
     private final Map<String, CompletableFuture<Long>> exports = new ConcurrentHashMap<>();
     private final Map<String, String> exportErrors = new ConcurrentHashMap<>();
     private final ExecutorService exportExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -116,6 +133,19 @@ public final class ArchitectCommandEngine implements AutoCloseable {
 
     public BuildQueue queue() {
         return queue;
+    }
+
+    /** Source of the server-to-client camera updates. */
+    public BuildCameraDirector cameraDirector() {
+        return camera;
+    }
+
+    public void setCameraControl(CameraControl control) {
+        this.cameraControl = control;
+    }
+
+    public void setCrewControl(CrewControl control) {
+        this.crewControl = control;
     }
 
     /** Loads a saved scene plan (throws {@link IllegalArgumentException} with a user-facing message if missing). */
@@ -160,6 +190,7 @@ public final class ArchitectCommandEngine implements AutoCloseable {
                 case "cancel" -> handleCancel(playerId, world);
                 case "undo" -> handleUndo(playerId);
                 case "camera" -> handleCamera(playerId, args);
+                case "npc" -> handleNpc(args);
                 default -> new CommandResult(false, "Unknown subcommand. Use /architect help.");
             };
         } catch (IllegalArgumentException | IllegalStateException | UncheckedIOException ex) {
@@ -398,7 +429,17 @@ public final class ArchitectCommandEngine implements AutoCloseable {
     }
 
     private CommandResult handleCamera(UUID playerId, String[] args) {
-        requireLength(args, 3, "Usage: /architect camera <orbit|flyby|top-down|reveal> [seconds]");
+        requireLength(args, 3, "Usage: /architect camera <auto|orbit|follow|wide|stop|status|flyby|top-down|reveal> [seconds]");
+        String action = args[2].toLowerCase(Locale.ROOT);
+        if (cameraControl != null && isLiveCameraAction(action)) {
+            if ("status".equals(action)) {
+                return new CommandResult(true, cameraControl.describe(playerId));
+            }
+            return new CommandResult(true, cameraControl.setMode(playerId, CameraMode.fromId(action)));
+        }
+        if ("status".equals(action)) {
+            return new CommandResult(false, "The cinematic camera is not available on this server.");
+        }
         ShotType type = ShotType.fromId(args[2]);
         int seconds = args.length > 3 ? parseInt(args[3], "seconds") : 20;
         if (seconds < 1 || seconds > 600) {
@@ -410,6 +451,27 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         return new CommandResult(true, String.format(Locale.ROOT,
             "Planned %s shot: %d keyframes over %ds starting at (%.0f, %.0f, %.0f). Playback needs a camera recorder (not included yet).",
             type.id(), path.keyframes().size(), seconds, first.x(), first.y(), first.z()));
+    }
+
+    /** Modes handled by the live client camera; the remaining ids keep planning an offline shot path. */
+    private static boolean isLiveCameraAction(String action) {
+        return switch (action) {
+            case "auto", "orbit", "follow", "wide", "stop", "none", "status" -> true;
+            default -> false;
+        };
+    }
+
+    private CommandResult handleNpc(String[] args) {
+        requireLength(args, 3, "Usage: /architect npc <on|off|status>");
+        if (crewControl == null) {
+            return new CommandResult(false, "Builder NPCs are not available on this server.");
+        }
+        return switch (args[2].toLowerCase(Locale.ROOT)) {
+            case "on", "enable", "true" -> new CommandResult(true, crewControl.setEnabled(true));
+            case "off", "disable", "false" -> new CommandResult(true, crewControl.setEnabled(false));
+            case "status" -> new CommandResult(true, crewControl.describe());
+            default -> new CommandResult(false, "Usage: /architect npc <on|off|status>");
+        };
     }
 
     private void startExport(String name, BlueprintSource blueprint) {
@@ -528,7 +590,9 @@ public final class ArchitectCommandEngine implements AutoCloseable {
                 "/architect resume",
                 "/architect cancel",
                 "/architect undo",
-                "/architect camera <orbit|flyby|top-down|reveal> [seconds]",
+                "/architect camera <auto|orbit|follow|wide|stop|status>",
+                "/architect camera <flyby|top-down|reveal> [seconds]",
+                "/architect npc <on|off|status>",
                 "/architect help"
             )));
     }

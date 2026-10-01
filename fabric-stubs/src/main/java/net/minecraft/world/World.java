@@ -13,6 +13,10 @@ public interface World {
 
     BlockState getBlockState(BlockPos pos);
 
+    default boolean isAir(BlockPos pos) {
+        return getBlockState(pos).isAir();
+    }
+
     boolean setBlockState(BlockPos pos, BlockState state, int flags);
 
     int getBottomY();

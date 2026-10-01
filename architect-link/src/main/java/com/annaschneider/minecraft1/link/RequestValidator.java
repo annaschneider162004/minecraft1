@@ -9,6 +9,8 @@ import java.util.regex.Pattern;
 public final class RequestValidator {
     private static final Pattern SOURCE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9:/._-]{0,199}");
     private static final Pattern BASE64 = Pattern.compile("[A-Za-z0-9+/]*={0,2}");
+    private static final java.util.Set<String> CAMERA_MODES =
+        java.util.Set.of("auto", "orbit", "follow", "wide", "stop", "status");
 
     private RequestValidator() {
     }
@@ -70,6 +72,12 @@ public final class RequestValidator {
                 } else {
                     requirePlanId(request.planId());
                 }
+            }
+            case CAMERA -> {
+                require(request.camera() != null || request.npc() != null,
+                    "A camera request needs a camera mode or an NPC toggle.");
+                require(request.camera() == null || CAMERA_MODES.contains(request.camera().toLowerCase(java.util.Locale.ROOT)),
+                    "Camera mode must be auto, orbit, follow, wide, stop or status.");
             }
             case STATUS, PAUSE, RESUME, CANCEL, UNDO, RECORD_START, RECORD_STOP, RECORD_STATUS -> {
                 // no parameters

@@ -169,7 +169,25 @@ public final class DesktopBridge implements AutoCloseable {
             case RECORD_START -> recordStart(connection);
             case RECORD_STOP -> recordStop(connection);
             case RECORD_STATUS -> recordStatus(connection);
+            case CAMERA -> camera(connection, request);
         };
+    }
+
+    /** Camera mode and/or NPC toggle; both are plain {@code /architect} commands run for the connected player. */
+    private LinkMessage camera(LinkConnection connection, LinkRequest request) {
+        LinkMessage response = null;
+        if (request.camera() != null) {
+            response = command(connection, "camera " + request.camera().toLowerCase(java.util.Locale.ROOT));
+            if (!response.isOk()) {
+                return response;
+            }
+        }
+        if (request.npc() != null) {
+            LinkMessage npc = command(connection, "npc " + (request.npc() ? "on" : "off"));
+            response = response == null || !npc.isOk() ? npc
+                : LinkMessage.ok(null, response.message() + " " + npc.message());
+        }
+        return response == null ? LinkMessage.ok(null, "Nothing to change.") : response;
     }
 
     private LinkMessage recordStart(LinkConnection connection) {

@@ -10,4 +10,8 @@ public class BlockState {
     public Block getBlock() {
         return block;
     }
+
+    public boolean isAir() {
+        return block == Blocks.AIR;
+    }
 }
