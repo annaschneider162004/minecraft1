@@ -22,4 +22,11 @@ public interface BuildAgent {
     boolean isIdle();
 
     void assign(AgentTask task);
+
+    /**
+     * Repositions the worker so it looks busy next to {@code lookAt}. Purely cosmetic: the
+     * {@link com.annaschneider.minecraft1.largebuild.engine.BuildQueue} remains the only writer of blocks.
+     */
+    default void moveTo(Vec3i position, Vec3i lookAt) {
+    }
 }
