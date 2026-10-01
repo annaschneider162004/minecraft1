@@ -6,7 +6,9 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    // Fabric Loom adds its own repositories (Mojang libraries, remapped Minecraft jars) to :architect-mod, so project
+    // repositories must be allowed; every other module uses the repositories below.
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     repositories {
         mavenCentral()
         maven { url = 'https://maven.fabricmc.net/' }

@@ -1,6 +1,8 @@
 package com.mojang.brigadier;
 
+import com.mojang.brigadier.builder.ArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import java.util.HashMap;
@@ -25,7 +27,14 @@ public class CommandDispatcher<S> {
         }
         CommandContext<S> ctx = new CommandContext<>(source);
         if (parts.length > 1) {
-            ctx.setArgument("command", parts[1]);
+            // Minimal routing: the remaining input goes to the first argument child (enough for greedy strings).
+            for (ArgumentBuilder<S, ?> child : cmd.getChildren()) {
+                if (child instanceof RequiredArgumentBuilder<?, ?> argument && child.getCommand() != null) {
+                    ctx.setArgument(argument.getName(), parts[1]);
+                    return child.getCommand().run(ctx);
+                }
+            }
+            return 0;
         }
         if (cmd.getCommand() != null) {
             return cmd.getCommand().run(ctx);

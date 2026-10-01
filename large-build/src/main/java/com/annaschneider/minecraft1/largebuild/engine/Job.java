@@ -17,6 +17,8 @@ abstract class Job {
     boolean waitingForChunks;
     String message = "";
     JobState stateBeforePause;
+    /** World the job was started in; {@code null} means "the world passed to {@link BuildQueue#tick}". */
+    WorldAccess world;
     private final List<Long> heldChunks = new ArrayList<>(4);
 
     Job(long id, UUID owner, String name, JobKind kind) {
@@ -24,6 +26,10 @@ abstract class Job {
         this.owner = owner;
         this.name = name;
         this.kind = kind;
+    }
+
+    WorldAccess worldOr(WorldAccess fallback) {
+        return world != null ? world : fallback;
     }
 
     /** Performs bounded work. Returns {@code true} once the job is complete. */

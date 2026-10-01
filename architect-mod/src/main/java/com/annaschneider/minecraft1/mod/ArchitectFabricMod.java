@@ -9,7 +9,6 @@ import com.annaschneider.minecraft1.mod.fabric.FabricPlayerDirectory;
 import com.annaschneider.minecraft1.mod.recording.RecordingChannels;
 import com.annaschneider.minecraft1.mod.recording.ServerRecordingCoordinator;
 import com.annaschneider.minecraft1.mod.runtime.ArchitectServerRuntime;
-import com.annaschneider.minecraft1.mod.runtime.BlockWorld;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -100,15 +99,26 @@ public final class ArchitectFabricMod implements ModInitializer {
             return handleRecordCommand(source, player, trimmed);
         }
 
-        FabricBlockWorld world = playerDirectory.worldAdapter(player.getServerWorld());
-        Vec3i origin = new Vec3i(player.getBlockX(), player.getBlockY(), player.getBlockZ());
-        CommandResult result = runtime.engine().execute(player.getUuid(), world, origin, "/architect " + input);
+        CommandResult result = runEngine(player, input);
         if (result.success()) {
             source.sendFeedback(() -> Text.literal(result.message()), false);
             return 1;
         } else {
             source.sendError(Text.literal(result.message()));
             return 0;
+        }
+    }
+
+    /** Runs the shared command engine in the player's current world at their current position. */
+    private CommandResult runEngine(ServerPlayerEntity player, String input) {
+        try {
+            FabricBlockWorld world = playerDirectory.worldAdapter(player.getServerWorld());
+            Vec3i origin = new Vec3i(player.getBlockX(), player.getBlockY(), player.getBlockZ());
+            return runtime.engine().execute(player.getUuid(), world, origin, "/architect " + input);
+        } catch (RuntimeException ex) {
+            LOGGER.warning("[Architect] /architect " + input + " failed: " + ex);
+            String reason = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+            return new CommandResult(false, "Architect command failed: " + reason);
         }
     }
 
@@ -153,34 +163,40 @@ public final class ArchitectFabricMod implements ModInitializer {
 
     private void onServerStopping(MinecraftServer server) {
         LOGGER.info("[Architect] Server stopping. Cleaning up Architect resources...");
-        if (playerDirectory != null) {
-            playerDirectory.releaseAllChunkTickets();
-        }
-        if (runtime != null) {
-            runtime.close();
-            runtime = null;
-        }
-        this.playerDirectory = null;
-        this.currentServer = null;
+        shutdown();
     }
 
     private void onServerStopped(MinecraftServer server) {
+        shutdown();
+    }
+
+    /** Closes the desktop link (deleting desktop-link.json) and releases every chunk ticket; safe to call twice. */
+    private void shutdown() {
         if (runtime != null) {
-            runtime.close();
+            try {
+                runtime.close();
+            } catch (RuntimeException ex) {
+                LOGGER.warning("[Architect] Error while closing the runtime: " + ex);
+            }
             runtime = null;
         }
-        this.playerDirectory = null;
+        if (playerDirectory != null) {
+            playerDirectory.releaseAllChunkTickets();
+            playerDirectory = null;
+        }
         this.currentServer = null;
     }
 
     private void onEndServerTick(MinecraftServer server) {
-        if (runtime == null || playerDirectory == null) {
+        if (runtime == null || playerDirectory == null || server != currentServer) {
             return;
         }
-        BlockWorld tickWorld = playerDirectory.find(null)
-            .map(p -> (BlockWorld) p.world())
-            .orElseGet(() -> playerDirectory.worldAdapter(server.getOverworld()));
-        runtime.tick(tickWorld);
+        try {
+            // Build jobs remember the world they were started in; the overworld is only the fallback for unbound jobs.
+            runtime.tick(playerDirectory.worldAdapter(server.getOverworld()));
+        } catch (RuntimeException ex) {
+            LOGGER.warning("[Architect] Tick failed: " + ex);
+        }
     }
 
     public ArchitectServerRuntime runtime() {

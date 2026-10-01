@@ -1,14 +1,108 @@
+// :architect-mod is built in one of two modes:
+//
+//  * Fabric mode (default when Gradle runs on JDK 25+, or with -Parchitect.stubs=false): Fabric Loom compiles the mod
+//    against the real, yarn-mapped Minecraft 1.20.1 + Fabric API and produces the remapped, installable mod jar
+//    build/libs/architect-mod-<version>.jar with all platform-neutral modules bundled inside.
+//  * Headless mode (automatic on older JDKs, or with -Parchitect.stubs=true): compiles against :fabric-stubs, so
+//    runLinkDemo, the tests and the rest of the build work offline without downloading Minecraft. No mod jar is built.
+buildscript {
+    def stubsProperty = project.findProperty('architect.stubs')
+    boolean fabric = stubsProperty != null
+        ? !stubsProperty.toString().toBoolean()
+        : JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)
+    project.ext.architectFabric = fabric
+    // On older JDKs Loom cannot run; the explanatory error below is thrown instead of a class-version failure.
+    if (fabric && JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)) {
+        repositories {
+            maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+            mavenCentral()
+            gradlePluginPortal()
+        }
+        dependencies {
+            classpath "net.fabricmc:fabric-loom:${project.property('loom_version')}"
+        }
+    }
+}
+
+boolean fabric = project.ext.architectFabric
+
+configurations {
+    // Platform-neutral modules shipped inside the mod jar. Not transitive: their only external dependency, Gson 2.10.1,
+    // is provided by Minecraft 1.20.1 itself.
+    bundled {
+        canBeConsumed = false
+        transitive = false
+    }
+    implementation.extendsFrom bundled
+}
+
 dependencies {
-    implementation project(':architect-domain')
-    implementation project(':build-assistant')
-    implementation project(':instant-builder')
-    implementation project(':build-transformer')
-    implementation project(':world-generator')
-    implementation project(':ai-foundation')
-    implementation project(':large-build')
-    implementation project(':architect-link')
-    compileOnly project(':fabric-stubs')
-    testImplementation project(':fabric-stubs')
+    bundled project(':architect-domain')
+    bundled project(':build-assistant')
+    bundled project(':instant-builder')
+    bundled project(':build-transformer')
+    bundled project(':world-generator')
+    bundled project(':ai-foundation')
+    bundled project(':large-build')
+    bundled project(':architect-link')
+}
+
+if (fabric) {
+    if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)) {
+        throw new GradleException("Building the Fabric mod jar needs Gradle to run on JDK 25 (Fabric Loom " +
+            "${project.property('loom_version')}), but it runs on Java ${JavaVersion.current()}. Install a JDK 25 and " +
+            "point JAVA_HOME at it, or pass -Parchitect.stubs=true to build in headless (demo) mode.")
+    }
+    apply plugin: 'net.fabricmc.fabric-loom-remap'
+
+    repositories {
+        mavenCentral()
+    }
+
+    loom {
+        mods {
+            architect {
+                sourceSet sourceSets.main
+            }
+        }
+    }
+
+    dependencies {
+        minecraft "com.mojang:minecraft:${project.minecraft_version}"
+        mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+        modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+        modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.release = 17
+    }
+
+    jar {
+        dependsOn configurations.bundled
+        from { configurations.bundled.collect { it.isDirectory() ? it : zipTree(it) } }
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        exclude 'META-INF/MANIFEST.MF', 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+    }
+} else {
+    dependencies {
+        compileOnly project(':fabric-stubs')
+        testImplementation project(':fabric-stubs')
+    }
+    // Tests that drive the Fabric entrypoint and adapters against the stub Minecraft classes.
+    sourceSets.test.java.srcDir 'src/stubTest/java'
+    // A jar compiled against the stubs cannot be loaded by Minecraft, so none is produced in this mode.
+    tasks.named('jar') { enabled = false }
+    logger.lifecycle(':architect-mod builds in headless mode (Gradle runs on Java ' + JavaVersion.current()
+        + '): no Minecraft mod jar is produced. Run Gradle on JDK 25 without -Parchitect.stubs=true to build it.')
+}
+
+processResources {
+    def version = project.version
+    inputs.property 'version', version
+    filesMatching('fabric.mod.json') {
+        expand 'version': version
+    }
 }
 
 // Headless stand-in for Minecraft: runs the command engine and the desktop link against an in-memory world so the

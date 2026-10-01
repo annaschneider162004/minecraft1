@@ -4,6 +4,7 @@ import com.annaschneider.minecraft1.domain.Vec3i;
 import com.annaschneider.minecraft1.mod.runtime.BlockWorld;
 import net.minecraft.block.Block;
 import net.minecraft.registry.Registries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Identifier;
@@ -51,6 +52,7 @@ public final class FabricBlockWorld implements BlockWorld {
 
     @Override
     public void setBlock(Vec3i position, String blockId) {
+        requireServerThread();
         if (blockId == null || blockId.isBlank()) {
             throw new IllegalArgumentException("Block ID cannot be empty.");
         }
@@ -88,6 +90,7 @@ public final class FabricBlockWorld implements BlockWorld {
 
     @Override
     public boolean prepareChunk(int chunkX, int chunkZ) {
+        requireServerThread();
         ChunkPos pos = new ChunkPos(chunkX, chunkZ);
         if (heldTickets.add(pos)) {
             world.getChunkManager().addTicket(ChunkTicketType.FORCED, pos, 2, pos);
@@ -109,6 +112,14 @@ public final class FabricBlockWorld implements BlockWorld {
             world.getChunkManager().removeTicket(ChunkTicketType.FORCED, pos, 2, pos);
         }
         heldTickets.clear();
+    }
+
+    /** World access is only safe on the server thread; desktop requests and ticks are already marshalled there. */
+    private void requireServerThread() {
+        MinecraftServer server = world.getServer();
+        if (server != null && !server.isOnThread()) {
+            throw new IllegalStateException("Minecraft world changes must run on the server thread.");
+        }
     }
 
     public Set<ChunkPos> heldTickets() {

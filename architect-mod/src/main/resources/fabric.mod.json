@@ -3,7 +3,7 @@
   "id": "architect",
   "version": "${version}",
   "name": "Minecraft AI Architect Suite",
-  "description": "Fabric 1.20.1 deterministic foundation for Minecraft AI Architect Suite.",
+  "description": "Build houses, castles and huge scenes with /architect or the Minecraft Architect desktop app.",
   "authors": ["annaschneider162004"],
   "license": "MIT",
   "environment": "*",
@@ -17,7 +17,7 @@
   },
   "depends": {
     "fabricloader": ">=0.15.11",
-    "fabric": "*",
+    "fabric-api": "*",
     "minecraft": "1.20.1",
     "java": ">=17"
   }
