@@ -445,17 +445,17 @@ prepared yet, because cosmetic entities never force chunks to load.
 | `dataDir` | temp dir | any writable directory |
 | `camera` | true | `false` disables the cinematic camera server-side |
 | `cameraMode` | `off` | `off`, `auto`, `orbit`, `follow`, `wide` — mode used before a player chooses one |
-| `cameraUpdateTicks` | 10 | 1..200 (how often a camera state packet may be sent) |
-| `cameraOrbitDistance` | 18 | 4..128 |
-| `cameraOrbitHeight` | 12 | 0..128 |
+| `cameraUpdateTicks` | 10 | 2..200 (how often a camera state packet may be sent) |
+| `cameraOrbitDistance` | 18 | 3..128 |
+| `cameraOrbitHeight` | 12 | 1..96 |
 | `cameraOrbitSpeed` | 9 | 1..90 degrees per second |
-| `cameraAutoShotSeconds` | 12 | 2..120 |
-| `cameraMaxSpeed` | 18 | 1..120 blocks per second |
+| `cameraAutoShotSeconds` | 12 | 3..120 |
+| `cameraMaxSpeed` | 18 | 1..64 blocks per second |
 | `cameraMaxDistance` | 192 | 16..512 |
-| `npc` | true | `false` disables the visible builder NPCs |
-| `npcMaxWorkers` | 4 | 0..16 |
-| `npcSectionsPerWorker` | 64 | 1..100000 |
-| `npcUpdateSections` | 2 | 1..512 |
+| `npcBuilders` | true | `false` disables the visible builder NPCs |
+| `npcMaxWorkers` | 4 | 1..12 |
+| `npcSectionsPerWorker` | 64 | 16..100000 |
+| `npcUpdateSections` | 2 | 1..64 |
 | `link` | true | `false` disables the desktop link |
 | `linkPort` | 47821 | 1024..65535 (the next free port is used if busy) |
 
@@ -510,7 +510,7 @@ Minecraft name in **Player name**. Settings are remembered.
 | *Connection refused / token rejected* | Minecraft was restarted; the app reconnects by itself with the new token. |
 | *Recording unavailable (ReplayMod not active)* | ReplayMod is optional: install it for 1.20.1 to record, or keep building without it — the cinematic camera still works and the recording buttons only show a message. |
 | The cinematic camera does not activate | Check `/architect camera status`, make sure a build is running (the camera needs job bounds), that the mod is installed **on the client** too, and that the server does not run with `-Darchitect.camera=false`. |
-| No workers appear around the build | Check `/architect npc status`; workers only spawn in chunks the build already prepared, their number scales with the job size (`npcSectionsPerWorker`), and `-Darchitect.npc=false` or `npcMaxWorkers=0` disables them. |
+| No workers appear around the build | Check `/architect npc status`; workers only spawn in chunks the build already prepared, their number scales with the job size (`npcSectionsPerWorker`), and `-Darchitect.npcBuilders=false` disables them. |
 | Port 47821 is used by another program | The mod uses the next free port automatically; the app reads it from the link file. Or set `-Darchitect.linkPort=<port>` in the launcher's JVM arguments. |
 
 ### How to use (UI flow)
