@@ -6,10 +6,13 @@
   "description": "Fabric 1.20.1 deterministic foundation for Minecraft AI Architect Suite.",
   "authors": ["annaschneider162004"],
   "license": "MIT",
-  "environment": "server",
+  "environment": "*",
   "entrypoints": {
     "main": [
       "com.annaschneider.minecraft1.mod.ArchitectFabricMod"
+    ],
+    "client": [
+      "com.annaschneider.minecraft1.mod.client.ArchitectClientMod"
     ]
   },
   "depends": {

@@ -37,6 +37,22 @@ public class ServerPlayerEntity {
         return name;
     }
 
+    public Text getName() {
+        return Text.literal(name);
+    }
+
+    public int getBlockX() {
+        return pos.getX();
+    }
+
+    public int getBlockY() {
+        return pos.getY();
+    }
+
+    public int getBlockZ() {
+        return pos.getZ();
+    }
+
     public BlockPos getBlockPos() {
         return pos;
     }

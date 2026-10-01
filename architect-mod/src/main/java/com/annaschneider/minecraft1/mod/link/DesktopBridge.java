@@ -20,8 +20,10 @@ import com.annaschneider.minecraft1.link.LinkServer;
 import com.annaschneider.minecraft1.link.PlanSummary;
 import com.annaschneider.minecraft1.link.RegionBox;
 import com.annaschneider.minecraft1.link.ServerInfo;
+import com.annaschneider.minecraft1.link.RecordingStatus;
 import com.annaschneider.minecraft1.mod.command.ArchitectCommandEngine;
 import com.annaschneider.minecraft1.mod.command.CommandResult;
+import com.annaschneider.minecraft1.mod.recording.ServerRecordingCoordinator;
 import com.annaschneider.minecraft1.mod.runtime.ArchitectConfig;
 
 import java.io.IOException;
@@ -60,16 +62,27 @@ public final class DesktopBridge implements AutoCloseable {
     private final String modVersion;
     private final SceneCompiler compiler = new SceneCompiler();
     private final List<String> templates;
+    private final ServerRecordingCoordinator recordingCoordinator;
     private final Map<Long, JobStatus> lastSent = new HashMap<>();
     private LinkServer server;
     private Path linkFile;
     private long ticks;
 
     public DesktopBridge(ArchitectCommandEngine engine, PlayerDirectory players, String modVersion) {
+        this(engine, players, modVersion, new ServerRecordingCoordinator(null));
+    }
+
+    public DesktopBridge(ArchitectCommandEngine engine, PlayerDirectory players, String modVersion, ServerRecordingCoordinator recordingCoordinator) {
         this.engine = Objects.requireNonNull(engine, "engine");
         this.players = Objects.requireNonNull(players, "players");
         this.modVersion = modVersion == null ? "dev" : modVersion;
+        this.recordingCoordinator = Objects.requireNonNull(recordingCoordinator, "recordingCoordinator");
         this.templates = new TemplateRegistry().ids().stream().sorted().toList();
+        this.engine.queue().addListener(recordingCoordinator.buildListener());
+    }
+
+    public ServerRecordingCoordinator recordingCoordinator() {
+        return recordingCoordinator;
     }
 
     /**
@@ -153,7 +166,33 @@ public final class DesktopBridge implements AutoCloseable {
             case RESUME -> command(connection, "resume");
             case CANCEL -> command(connection, "cancel");
             case UNDO -> command(connection, "undo");
+            case RECORD_START -> recordStart(connection);
+            case RECORD_STOP -> recordStop(connection);
+            case RECORD_STATUS -> recordStatus(connection);
         };
+    }
+
+    private LinkMessage recordStart(LinkConnection connection) {
+        Optional<PlayerContext> player = players.find(connection.player());
+        java.util.UUID playerId = player.map(PlayerContext::id).orElse(null);
+        String playerName = player.map(PlayerContext::name).orElse(null);
+        RecordingStatus status = recordingCoordinator.startRecording(playerId, playerName);
+        return LinkMessage.ok(null, status.message()).withRecording(status);
+    }
+
+    private LinkMessage recordStop(LinkConnection connection) {
+        Optional<PlayerContext> player = players.find(connection.player());
+        java.util.UUID playerId = player.map(PlayerContext::id).orElse(null);
+        String playerName = player.map(PlayerContext::name).orElse(null);
+        RecordingStatus status = recordingCoordinator.stopRecording(playerId, playerName);
+        return LinkMessage.ok(null, status.message()).withRecording(status);
+    }
+
+    private LinkMessage recordStatus(LinkConnection connection) {
+        Optional<PlayerContext> player = players.find(connection.player());
+        java.util.UUID playerId = player.map(PlayerContext::id).orElse(null);
+        RecordingStatus status = recordingCoordinator.getStatus(playerId);
+        return LinkMessage.ok(null, status.message()).withRecording(status);
     }
 
     private LinkMessage status(LinkConnection connection) {
@@ -162,7 +201,9 @@ public final class DesktopBridge implements AutoCloseable {
             templates, ArchitectConfig.MAX_IMAGE_SCALE, LinkProtocol.MAX_IMAGE_BYTES);
         String message = player.map(p -> "Connected to Minecraft as " + p.name() + ".")
             .orElseGet(() -> missingPlayerMessage(connection) + " You can still prepare plans.");
-        LinkMessage response = LinkMessage.ok(null, message).withServer(info);
+        java.util.UUID playerId = player.map(PlayerContext::id).orElse(null);
+        RecordingStatus recStatus = recordingCoordinator.getStatus(playerId);
+        LinkMessage response = LinkMessage.ok(null, message).withServer(info).withRecording(recStatus);
         return player.flatMap(p -> engine.queue().progress(p.id())).map(p -> response.withJob(toStatus(p))).orElse(response);
     }
 
@@ -233,7 +274,8 @@ public final class DesktopBridge implements AutoCloseable {
                 .map(DesktopBridge::toStatus);
             if (status.isPresent() && !status.get().equals(lastSent.get(connection.id()))) {
                 lastSent.put(connection.id(), status.get());
-                connection.send(LinkMessage.progress(status.get()));
+                java.util.UUID playerId = players.find(connection.player()).map(PlayerContext::id).orElse(null);
+                connection.send(LinkMessage.progress(status.get()).withRecording(recordingCoordinator.getStatus(playerId)));
             }
         }
         lastSent.keySet().retainAll(open);

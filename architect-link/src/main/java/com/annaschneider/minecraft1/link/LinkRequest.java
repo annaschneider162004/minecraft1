@@ -67,6 +67,18 @@ public record LinkRequest(
         return target(RequestType.BUILD, mode, templateOrPlanId);
     }
 
+    public static LinkRequest recordStart() {
+        return of(RequestType.RECORD_START);
+    }
+
+    public static LinkRequest recordStop() {
+        return of(RequestType.RECORD_STOP);
+    }
+
+    public static LinkRequest recordStatus() {
+        return of(RequestType.RECORD_STATUS);
+    }
+
     private static LinkRequest target(RequestType type, BuildMode mode, String value) {
         return new LinkRequest(LinkProtocol.VERSION, null, type, null, null, null, mode,
             mode == BuildMode.TEMPLATE ? value : null, mode == BuildMode.PLAN ? value : null, null, null, null, null, null);

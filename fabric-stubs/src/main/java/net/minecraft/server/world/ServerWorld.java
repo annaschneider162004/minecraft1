@@ -33,6 +33,10 @@ public class ServerWorld implements World {
         return chunkManager;
     }
 
+    public boolean isChunkLoaded(int chunkX, int chunkZ) {
+        return chunkManager.isChunkLoaded(chunkX, chunkZ);
+    }
+
     @Override
     public BlockState getBlockState(BlockPos pos) {
         return blocks.getOrDefault(pos, Blocks.AIR.getDefaultState());

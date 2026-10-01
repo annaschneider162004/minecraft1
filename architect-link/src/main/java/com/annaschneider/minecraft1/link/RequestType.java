@@ -18,5 +18,8 @@ public enum RequestType {
     @SerializedName("pause") PAUSE,
     @SerializedName("resume") RESUME,
     @SerializedName("cancel") CANCEL,
-    @SerializedName("undo") UNDO
+    @SerializedName("undo") UNDO,
+    @SerializedName("record_start") RECORD_START,
+    @SerializedName("record_stop") RECORD_STOP,
+    @SerializedName("record_status") RECORD_STATUS
 }
