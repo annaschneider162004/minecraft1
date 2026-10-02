@@ -33,6 +33,7 @@ public final class ClientCinematicCamera {
     private static final double MAX_DELTA_SECONDS = 0.25;
 
     private final CinematicCameraController controller;
+    private final CameraSettings defaultSettings;
     private ArmorStandEntity view;
     private Perspective savedPerspective;
     private boolean savedHudHidden;
@@ -45,6 +46,7 @@ public final class ClientCinematicCamera {
 
     public ClientCinematicCamera(CinematicCameraController controller) {
         this.controller = controller;
+        this.defaultSettings = controller.settings();
     }
 
     public CinematicCameraController controller() {
@@ -104,6 +106,7 @@ public final class ClientCinematicCamera {
     /** The player left the world: forget the job but keep the chosen mode for the next one. */
     public void onDisconnect(MinecraftClient client) {
         controller.clearJob();
+        controller.setSettings(defaultSettings);
         restore(client);
     }
 
