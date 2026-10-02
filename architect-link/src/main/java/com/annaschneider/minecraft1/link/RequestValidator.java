@@ -79,6 +79,7 @@ public final class RequestValidator {
                 require(request.camera() == null || CAMERA_MODES.contains(request.camera().toLowerCase(java.util.Locale.ROOT)),
                     "Camera mode must be auto, orbit, follow, wide, stop or status.");
             }
+            case SETTINGS -> require(request.settings() != null, "Camera and NPC settings are required.");
             case STATUS, PAUSE, RESUME, CANCEL, UNDO, RECORD_START, RECORD_STOP, RECORD_STATUS -> {
                 // no parameters
             }

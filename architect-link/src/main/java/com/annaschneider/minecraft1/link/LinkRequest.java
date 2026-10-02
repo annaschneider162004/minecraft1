@@ -37,8 +37,20 @@ public record LinkRequest(
     String fileName,
     String data,
     String camera,
-    Boolean npc
+    Boolean npc,
+    CameraNpcSettings settings
 ) {
+    public LinkRequest(int v, String id, RequestType type, String token, String client, String player,
+                       BuildMode mode, String template, String planId, String source, String prompt, Integer scale,
+                       String fileName, String data, String camera, Boolean npc) {
+        this(v, id, type, token, client, player, mode, template, planId, source, prompt, scale, fileName, data, camera, npc, null);
+    }
+
+    public static LinkRequest settings(CameraNpcSettings settings) {
+        return new LinkRequest(LinkProtocol.VERSION, null, RequestType.SETTINGS, null, null, null, null, null, null, null,
+            null, null, null, null, null, null, settings);
+    }
+
     public static LinkRequest of(RequestType type) {
         return new LinkRequest(LinkProtocol.VERSION, null, type, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
@@ -102,7 +114,7 @@ public record LinkRequest(
 
     public LinkRequest withId(String newId) {
         return new LinkRequest(v, newId, type, token, client, player, mode, template, planId, source, prompt, scale, fileName,
-            data, camera, npc);
+            data, camera, npc, settings);
     }
 
     /** Short description for logs; never includes the token or image data. */

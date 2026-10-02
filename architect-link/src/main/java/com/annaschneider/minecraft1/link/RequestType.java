@@ -22,6 +22,8 @@ public enum RequestType {
     @SerializedName("record_start") RECORD_START,
     @SerializedName("record_stop") RECORD_STOP,
     @SerializedName("record_status") RECORD_STATUS,
+    /** Applies saved, bounded camera and builder preferences to the connected runtime. */
+    @SerializedName("settings") SETTINGS,
     /** Switches the cinematic camera mode and/or toggles the visible builder NPCs. */
     @SerializedName("camera") CAMERA
 }
