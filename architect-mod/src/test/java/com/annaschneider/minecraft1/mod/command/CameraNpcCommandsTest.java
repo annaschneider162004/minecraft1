@@ -3,6 +3,7 @@ package com.annaschneider.minecraft1.mod.command;
 import com.annaschneider.minecraft1.domain.Vec3i;
 import com.annaschneider.minecraft1.largebuild.camera.CameraMode;
 import com.annaschneider.minecraft1.largebuild.engine.BuildSettings;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.mod.runtime.InMemoryBlockWorld;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +29,8 @@ class CameraNpcCommandsTest {
     private final UUID alice = UUID.randomUUID();
     private final UUID bob = UUID.randomUUID();
     private boolean npcEnabled = true;
+    private CameraNpcSettings receivedCamera;
+    private CameraNpcSettings receivedCrew;
 
     @BeforeEach
     void setUp() {
@@ -45,6 +48,11 @@ class CameraNpcCommandsTest {
             public String describe(UUID playerId) {
                 return "Cinematic camera: " + modes.getOrDefault(playerId, CameraMode.OFF).id() + ".";
             }
+
+            @Override
+            public void applySettings(UUID playerId, CameraNpcSettings settings) {
+                receivedCamera = settings;
+            }
         });
         engine.setCrewControl(new ArchitectCommandEngine.CrewControl() {
             @Override
@@ -57,7 +65,22 @@ class CameraNpcCommandsTest {
             public String describe() {
                 return "Builder NPCs " + (npcEnabled ? "enabled" : "disabled") + ".";
             }
+
+            @Override
+            public void applySettings(CameraNpcSettings settings) {
+                receivedCrew = settings;
+            }
         });
+    }
+
+    @Test
+    void appliesBoundedSettingsAndIsSafeWithoutPlayer() {
+        CameraNpcSettings incoming = new CameraNpcSettings(true, true, 100, 100, -1);
+        assertTrue(engine.applyCameraNpcSettings(null, incoming).contains("No player"));
+        assertEquals(null, receivedCamera);
+        assertTrue(engine.applyCameraNpcSettings(alice, incoming).contains("applied"));
+        assertEquals(new CameraNpcSettings(true, true, 12, 80, 1), receivedCamera);
+        assertEquals(receivedCamera, receivedCrew);
     }
 
     @AfterEach

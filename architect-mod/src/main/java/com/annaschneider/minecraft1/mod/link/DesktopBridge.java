@@ -10,6 +10,7 @@ import com.annaschneider.minecraft1.largebuild.scene.ScenePlan;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePreview;
 import com.annaschneider.minecraft1.largebuild.scene.SceneRegion;
 import com.annaschneider.minecraft1.link.BuildMode;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.JobStatus;
 import com.annaschneider.minecraft1.link.LinkConnection;
 import com.annaschneider.minecraft1.link.LinkInfo;
@@ -64,6 +65,7 @@ public final class DesktopBridge implements AutoCloseable {
     private final List<String> templates;
     private final ServerRecordingCoordinator recordingCoordinator;
     private final Map<Long, JobStatus> lastSent = new HashMap<>();
+    private final Map<Long, CameraNpcSettings> pendingSettings = new HashMap<>();
     private LinkServer server;
     private Path linkFile;
     private long ticks;
@@ -129,6 +131,16 @@ public final class DesktopBridge implements AutoCloseable {
             return;
         }
         server.drain(this::handle, MAX_REQUESTS_PER_TICK);
+        for (LinkConnection connection : server.connections()) {
+            CameraNpcSettings pending = pendingSettings.get(connection.id());
+            if (pending != null) {
+                players.find(connection.player()).ifPresent(player -> {
+                    engine.applyCameraNpcSettings(player.id(), pending);
+                    pendingSettings.remove(connection.id());
+                });
+            }
+        }
+        pendingSettings.keySet().retainAll(server.connections().stream().map(LinkConnection::id).toList());
         if (++ticks % PROGRESS_INTERVAL_TICKS == 0) {
             pushProgress();
         }
@@ -149,6 +161,7 @@ public final class DesktopBridge implements AutoCloseable {
             linkFile = null;
         }
         lastSent.clear();
+        pendingSettings.clear();
     }
 
     LinkMessage handle(LinkConnection connection, LinkRequest request) {
@@ -170,7 +183,21 @@ public final class DesktopBridge implements AutoCloseable {
             case RECORD_STOP -> recordStop(connection);
             case RECORD_STATUS -> recordStatus(connection);
             case CAMERA -> camera(connection, request);
+            case SETTINGS -> settings(connection, request);
         };
+    }
+
+    private LinkMessage settings(LinkConnection connection, LinkRequest request) {
+        CameraNpcSettings raw = request.settings();
+        CameraNpcSettings bounded = new CameraNpcSettings(raw.cameraEnabled(), raw.npcEnabled(), raw.maxNpcs(),
+            raw.cameraHeight(), raw.rotationSpeed());
+        var player = players.find(connection.player());
+        if (player.isEmpty()) {
+            pendingSettings.put(connection.id(), bounded);
+            return LinkMessage.ok(null, "No world/player yet; settings remain saved in the desktop app.");
+        }
+        pendingSettings.remove(connection.id());
+        return LinkMessage.ok(null, engine.applyCameraNpcSettings(player.get().id(), bounded));
     }
 
     /** Camera mode and/or NPC toggle; both are plain {@code /architect} commands run for the connected player. */

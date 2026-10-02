@@ -1,5 +1,6 @@
 package com.annaschneider.minecraft1.desktop;
 
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.LinkProtocol;
 
 import javax.swing.BorderFactory;
@@ -10,6 +11,10 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JCheckBox;
+import javax.swing.JSpinner;
+import javax.swing.SpinnerNumberModel;
+import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
@@ -26,13 +31,24 @@ final class SettingsDialog extends JDialog {
     private final DesktopSettings settings;
     private final JTextField linkFileField = new JTextField(42);
     private final JTextField playerField = new JTextField(16);
+    private final JCheckBox cameraEnabled = new JCheckBox("Enable cinematic camera");
+    private final JCheckBox npcEnabled = new JCheckBox("Show builder NPCs");
+    private final JSpinner maxNpcs = new JSpinner(new SpinnerNumberModel(4, 0, 12, 1));
+    private final JSpinner cameraHeight = new JSpinner(new SpinnerNumberModel(12, 5, 80, 1));
+    private final JSpinner rotationSpeed = new JSpinner(new SpinnerNumberModel(9, 1, 30, 1));
     private boolean saved;
 
     SettingsDialog(JFrame owner, DesktopSettings settings) {
-        super(owner, "Connection settings", true);
+        super(owner, "Settings", true);
         this.settings = settings;
         linkFileField.setText(settings.linkFile().toString());
         playerField.setText(settings.player());
+        CameraNpcSettings cameraNpc = settings.cameraNpcSettings();
+        cameraEnabled.setSelected(cameraNpc.cameraEnabled());
+        npcEnabled.setSelected(cameraNpc.npcEnabled());
+        maxNpcs.setValue(cameraNpc.maxNpcs());
+        cameraHeight.setValue(cameraNpc.cameraHeight());
+        rotationSpeed.setValue(cameraNpc.rotationSpeed());
 
         JPanel form = new JPanel(new GridBagLayout());
         form.setBorder(BorderFactory.createEmptyBorder(12, 12, 6, 12));
@@ -80,7 +96,7 @@ final class SettingsDialog extends JDialog {
             linkFileField.setText(LinkFileLocator.defaultLinkFile().toString());
             playerField.setText("");
         });
-        JButton save = new JButton("Save and reconnect");
+        JButton save = new JButton("Save and apply");
         save.addActionListener(event -> save());
         JButton cancel = new JButton("Cancel");
         cancel.addActionListener(event -> dispose());
@@ -88,7 +104,39 @@ final class SettingsDialog extends JDialog {
         buttons.add(save);
         buttons.add(cancel);
 
-        getContentPane().add(form, BorderLayout.CENTER);
+        JPanel cameraPanel = new JPanel(new GridBagLayout());
+        cameraPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        GridBagConstraints row = new GridBagConstraints();
+        row.anchor = GridBagConstraints.WEST;
+        row.insets = new Insets(5, 5, 5, 5);
+        row.gridwidth = 2;
+        cameraPanel.add(cameraEnabled, row);
+        row.gridy = 1;
+        cameraPanel.add(npcEnabled, row);
+        row.gridwidth = 1;
+        row.gridy = 2;
+        cameraPanel.add(new JLabel("Maximum NPCs (0–12, per build):"), row);
+        row.gridx = 1;
+        cameraPanel.add(maxNpcs, row);
+        row.gridx = 0;
+        row.gridy = 3;
+        cameraPanel.add(new JLabel("Camera height (5–80 blocks):"), row);
+        row.gridx = 1;
+        cameraPanel.add(cameraHeight, row);
+        row.gridx = 0;
+        row.gridy = 4;
+        cameraPanel.add(new JLabel("Rotation speed (1–30 degrees/second):"), row);
+        row.gridx = 1;
+        cameraPanel.add(rotationSpeed, row);
+        row.gridx = 0;
+        row.gridy = 5;
+        row.gridwidth = 2;
+        cameraPanel.add(new JLabel("<html>Saved locally. Applied to Minecraft when connected; camera is off until filming starts."
+            + "<br>Disabled by default for safe single-player and multiplayer use.</html>"), row);
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Connection", form);
+        tabs.addTab("Camera & NPC Settings", cameraPanel);
+        getContentPane().add(tabs, BorderLayout.CENTER);
         getContentPane().add(buttons, BorderLayout.SOUTH);
         getRootPane().setDefaultButton(save);
         pack();
@@ -131,6 +179,8 @@ final class SettingsDialog extends JDialog {
         }
         settings.setLinkFile(linkFile);
         settings.setPlayer(player);
+        settings.setCameraNpcSettings(new CameraNpcSettings(cameraEnabled.isSelected(), npcEnabled.isSelected(),
+            (int) maxNpcs.getValue(), (int) cameraHeight.getValue(), (int) rotationSpeed.getValue()));
         saved = true;
         dispose();
     }

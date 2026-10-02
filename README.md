@@ -452,7 +452,7 @@ prepared yet, because cosmetic entities never force chunks to load.
 | `cameraAutoShotSeconds` | 12 | 3..120 |
 | `cameraMaxSpeed` | 18 | 1..64 blocks per second |
 | `cameraMaxDistance` | 192 | 16..512 |
-| `npcBuilders` | true | `false` disables the visible builder NPCs |
+| `npcBuilders` | false | `true` enables builder NPCs at startup; the desktop setting can also enable them |
 | `npcMaxWorkers` | 4 | 1..12 |
 | `npcSectionsPerWorker` | 64 | 16..100000 |
 | `npcUpdateSections` | 2 | 1..64 |
@@ -502,6 +502,24 @@ Other launchers (CurseForge, Prism, MultiMC, Modrinth): open **Settings…** in 
 `<instance folder>\config\architect\desktop-link.json` with **Browse…**. On a server with several players enter your
 Minecraft name in **Player name**. Settings are remembered.
 
+### Camera & NPC Settings
+
+Open **Settings… → Camera & NPC Settings** to save these controls locally:
+
+| control | default | safe range / effect |
+|---|---:|---|
+| Enable cinematic camera | Off | Allows the selected player's camera to film during **Build + Record**; disabling restores the normal view. |
+| Show builder NPCs | Off | Spawns cosmetic workers around active build sections; disabling removes them. |
+| Maximum NPCs | 4 | 0–12 per build; 0 prevents spawning even when NPCs are enabled. |
+| Camera height | 12 | 5–80 blocks above the framed build. |
+| Rotation speed | 9 | 1–30 degrees per second around the build. |
+
+**Save and apply** sends the bounded values through the local desktop link when connected. Changes made offline
+remain saved and are sent on reconnect (or when a player enters the world on an already-connected link). The camera
+remains off until filming starts; the server's `-Darchitect.camera=false` still prevents activation. NPC limits
+apply to running builds as well as new ones. On a dedicated server the desktop link must run on the same machine as
+the mod; no client-only classes are loaded by the server.
+
 | What you see | What to do |
 |---|---|
 | *Minecraft is not running or the Architect mod is not loaded* (grey/red dot) | Start Minecraft with the mod and open a world; check the link-file path in **Settings…**. |
@@ -510,7 +528,7 @@ Minecraft name in **Player name**. Settings are remembered.
 | *Connection refused / token rejected* | Minecraft was restarted; the app reconnects by itself with the new token. |
 | *Recording unavailable (ReplayMod not active)* | ReplayMod is optional: install it for 1.20.1 to record, or keep building without it — the cinematic camera still works and the recording buttons only show a message. |
 | The cinematic camera does not activate | Check `/architect camera status`, make sure a build is running (the camera needs job bounds), that the mod is installed **on the client** too, and that the server does not run with `-Darchitect.camera=false`. |
-| No workers appear around the build | Check `/architect npc status`; workers only spawn in chunks the build already prepared, their number scales with the job size (`npcSectionsPerWorker`), and `-Darchitect.npcBuilders=false` disables them. |
+| No workers appear around the build | Enable them in **Camera & NPC Settings** (or `/architect npc on`); workers only spawn in chunks the build already prepared, and their number scales with the job size (`npcSectionsPerWorker`). |
 | Port 47821 is used by another program | The mod uses the next free port automatically; the app reads it from the link file. Or set `-Darchitect.linkPort=<port>` in the launcher's JVM arguments. |
 
 ### How to use (UI flow)

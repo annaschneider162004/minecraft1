@@ -1,6 +1,7 @@
 package com.annaschneider.minecraft1.desktop;
 
 import com.annaschneider.minecraft1.link.LinkClient;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.LinkException;
 import com.annaschneider.minecraft1.link.LinkInfo;
 import com.annaschneider.minecraft1.link.LinkMessage;
@@ -44,6 +45,11 @@ final class ArchitectConnection {
     });
     private volatile LinkClient client;
     private volatile State state = State.DISCONNECTED;
+    private volatile CameraNpcSettings cameraNpcSettings = CameraNpcSettings.defaults();
+
+    void setCameraNpcSettings(CameraNpcSettings settings) {
+        cameraNpcSettings = settings;
+    }
 
     ArchitectConnection(Listener listener) {
         this.listener = listener;
@@ -93,6 +99,15 @@ final class ArchitectConnection {
                 }, LinkClient.DEFAULT_TIMEOUT);
                 client = connected;
                 LinkMessage status = connected.call(LinkRequest.of(RequestType.STATUS));
+                try {
+                    LinkMessage applied = connected.call(LinkRequest.settings(cameraNpcSettings));
+                    if (!applied.isOk()) {
+                        SwingUtilities.invokeLater(() -> listener.onEvent(LinkMessage.log(applied.message())));
+                    }
+                } catch (LinkException ex) {
+                    SwingUtilities.invokeLater(() -> listener.onEvent(LinkMessage.log(
+                        "Camera/NPC settings could not be applied: " + ex.getMessage())));
+                }
                 setState(State.CONNECTED, status.message(), connected.serverInfo());
                 if (status.job() != null) {
                     SwingUtilities.invokeLater(() -> listener.onEvent(LinkMessage.progress(status.job())));

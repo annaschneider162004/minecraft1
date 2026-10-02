@@ -2,6 +2,7 @@ package com.annaschneider.minecraft1.mod;
 
 import com.annaschneider.minecraft1.domain.Vec3i;
 import com.annaschneider.minecraft1.link.LinkInfo;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.RecordingStatus;
 import com.annaschneider.minecraft1.largebuild.camera.CameraMode;
 import com.annaschneider.minecraft1.largebuild.npc.BuildCrewCoordinator;
@@ -190,8 +191,15 @@ public final class ArchitectFabricMod implements ModInitializer {
 
             @Override
             public String describe(java.util.UUID playerId) {
+                CameraNpcSettings current = cameraCoordinator.settings(playerId);
                 return "Cinematic camera: " + cameraCoordinator.mode(playerId).id()
-                    + (ArchitectConfig.CAMERA_ENABLED ? "." : " (disabled on this server).");
+                    + ", " + (current.cameraEnabled() && ArchitectConfig.CAMERA_ENABLED ? "enabled" : "disabled")
+                    + ", height " + current.cameraHeight() + " blocks, rotation " + current.rotationSpeed() + "°/s.";
+            }
+
+            @Override
+            public void applySettings(java.util.UUID playerId, CameraNpcSettings settings) {
+                cameraCoordinator.applySettings(playerId, settings);
             }
         });
 
@@ -209,7 +217,16 @@ public final class ArchitectFabricMod implements ModInitializer {
             @Override
             public String describe() {
                 return "Builder NPCs " + (crew.settings().enabled() ? "enabled" : "disabled")
-                    + ", " + crew.workerCount() + " worker(s) active.";
+                    + ", max " + (crew.settings().enabled() ? crew.settings().maxWorkers() : 0)
+                    + " per build, " + crew.workerCount() + " worker(s) active.";
+            }
+
+            @Override
+            public void applySettings(CameraNpcSettings settings) {
+                var current = crew.settings();
+                crew.setSettings(new com.annaschneider.minecraft1.largebuild.npc.NpcSettings(
+                    settings.npcEnabled() && settings.maxNpcs() > 0,
+                    Math.max(1, settings.maxNpcs()), current.sectionsPerWorker(), current.updateIntervalSections()));
             }
         });
         try {

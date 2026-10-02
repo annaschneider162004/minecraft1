@@ -33,6 +33,7 @@ import com.annaschneider.minecraft1.largebuild.scene.ScenePlan;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePreview;
 import com.annaschneider.minecraft1.largebuild.scene.SceneRegion;
 import com.annaschneider.minecraft1.mod.runtime.ArchitectConfig;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.mod.runtime.BlockCatalog;
 import com.annaschneider.minecraft1.mod.runtime.BlockWorld;
 import com.annaschneider.minecraft1.mod.runtime.BlockWorldAccess;
@@ -65,6 +66,8 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         String setMode(UUID playerId, CameraMode mode);
 
         String describe(UUID playerId);
+
+        void applySettings(UUID playerId, CameraNpcSettings settings);
     }
 
     /** Visible builder NPCs; supplied by the Fabric adapter, absent in headless tests. */
@@ -72,6 +75,8 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         String setEnabled(boolean enabled);
 
         String describe();
+
+        void applySettings(CameraNpcSettings settings);
     }
 
     public static final Vec3i DEFAULT_ORIGIN = new Vec3i(0, 1, 0);
@@ -146,6 +151,24 @@ public final class ArchitectCommandEngine implements AutoCloseable {
 
     public void setCrewControl(CrewControl control) {
         this.crewControl = control;
+    }
+
+    /** Apply desktop preferences on the server thread; headless/demo runtimes can report unavailable features. */
+    public String applyCameraNpcSettings(UUID playerId, CameraNpcSettings settings) {
+        if (playerId == null) {
+            return "No player is in a world; settings remain saved in the desktop app.";
+        }
+        CameraNpcSettings bounded = new CameraNpcSettings(settings.cameraEnabled(), settings.npcEnabled(),
+            settings.maxNpcs(), settings.cameraHeight(), settings.rotationSpeed());
+        if (cameraControl != null) {
+            cameraControl.applySettings(playerId, bounded);
+        }
+        if (crewControl != null) {
+            crewControl.applySettings(bounded);
+        }
+        return cameraControl == null && crewControl == null
+            ? "Camera and NPC features are unavailable in this runtime; settings remain saved."
+            : "Camera and NPC settings applied.";
     }
 
     /** Loads a saved scene plan (throws {@link IllegalArgumentException} with a user-facing message if missing). */

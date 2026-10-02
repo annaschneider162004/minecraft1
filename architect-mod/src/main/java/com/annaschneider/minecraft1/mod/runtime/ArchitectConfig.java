@@ -37,7 +37,7 @@ public final class ArchitectConfig {
     public static final int CAMERA_MAX_DISTANCE = clamp(Integer.getInteger("architect.cameraMaxDistance", 192), 16, 512);
 
     /** Whether visible builder NPCs are spawned around active sections. */
-    public static final boolean NPC_ENABLED = Boolean.parseBoolean(System.getProperty("architect.npcBuilders", "true"));
+    public static final boolean NPC_ENABLED = Boolean.parseBoolean(System.getProperty("architect.npcBuilders", "false"));
     public static final int NPC_MAX_WORKERS = clamp(Integer.getInteger("architect.npcMaxWorkers", 4), 1, 12);
     public static final int NPC_SECTIONS_PER_WORKER = clamp(Integer.getInteger("architect.npcSectionsPerWorker", 64), 16, 100_000);
     public static final int NPC_UPDATE_SECTIONS = clamp(Integer.getInteger("architect.npcUpdateSections", 2), 1, 64);

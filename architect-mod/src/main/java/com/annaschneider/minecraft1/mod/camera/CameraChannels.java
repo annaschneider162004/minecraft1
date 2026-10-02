@@ -12,6 +12,7 @@ public final class CameraChannels {
     public static final Identifier CAMERA_MODE_CHANNEL = new Identifier("architect", "camera_mode");
     /** Carries the geometry and state of the job the camera should follow. */
     public static final Identifier CAMERA_STATE_CHANNEL = new Identifier("architect", "camera_state");
+    public static final Identifier CAMERA_SETTINGS_CHANNEL = new Identifier("architect", "camera_settings");
 
     private CameraChannels() {
     }

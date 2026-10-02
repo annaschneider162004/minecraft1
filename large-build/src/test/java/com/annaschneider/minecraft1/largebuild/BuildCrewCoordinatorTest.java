@@ -142,6 +142,38 @@ class BuildCrewCoordinatorTest {
     }
 
     @Test
+    void resizingLiveCrewAppliesNewMaximum() {
+        FakeFactory factory = new FakeFactory();
+        BuildCrewCoordinator crew = new BuildCrewCoordinator(factory, new NpcSettings(true, 4, 16, 2));
+        UUID owner = UUID.randomUUID();
+        var running = job(1, owner, JobState.RUNNING, 256);
+        crew.onJobStarted(running, new Bounds(0, 0, 0, 31, 31, 31));
+        assertEquals(4, factory.alive());
+        crew.setSettings(new NpcSettings(true, 1, 16, 2));
+        crew.sync(List.of(running));
+        assertEquals(1, factory.alive());
+        crew.setSettings(new NpcSettings(true, 3, 16, 2));
+        crew.sync(List.of(running));
+        assertEquals(3, factory.alive());
+        crew.shutdown();
+        assertEquals(0, factory.alive());
+    }
+
+    @Test
+    void enablingDuringAnActiveBuildCreatesWorkers() {
+        FakeFactory factory = new FakeFactory();
+        BuildCrewCoordinator crew = new BuildCrewCoordinator(factory, new NpcSettings(false, 2, 16, 2));
+        var running = job(1, UUID.randomUUID(), JobState.RUNNING, 64);
+        crew.onJobStarted(running, new Bounds(0, 0, 0, 31, 31, 31));
+        assertEquals(0, factory.alive());
+        crew.setSettings(new NpcSettings(true, 2, 16, 2));
+        crew.sync(List.of(running));
+        assertEquals(2, factory.alive());
+        crew.setSettings(new NpcSettings(false, 2, 16, 2));
+        assertEquals(0, factory.alive());
+    }
+
+    @Test
     void smallJobsGetASingleWorkerAndDisabledNpcsGetNone() {
         FakeFactory factory = new FakeFactory();
         BuildCrewCoordinator crew = new BuildCrewCoordinator(factory, NpcSettings.defaults());
