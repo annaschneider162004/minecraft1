@@ -118,6 +118,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     private final JProgressBar progressBar = new JProgressBar(0, 1000);
     private final JLabel noticeLabel = new JLabel(" ");
     private final JTextArea logArea = new JTextArea(7, 80);
+    private final BuildTimelineRecorder timeline = new BuildTimelineRecorder(System::currentTimeMillis);
+    private final VideoStudio videoStudio = new VideoStudio(new VideoStudioSettings());
+    private VideoStudioWindow studioWindow;
 
     private Path imageFile;
     private String lastSuggestedName = "";
@@ -145,6 +148,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             public void windowClosed(WindowEvent event) {
                 retryTimer.stop();
                 connection.shutdown();
+                if (studioWindow != null) {
+                    studioWindow.dispose();
+                }
             }
         });
         setTemplates(DEFAULT_TEMPLATES);
@@ -158,6 +164,27 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         setVisible(true);
         connect();
         retryTimer.start();
+        discoverVoices();
+    }
+
+    /** Finds voice packs and video tools at startup so problems show up in the log early. */
+    private void discoverVoices() {
+        Thread thread = new Thread(() -> {
+            com.annaschneider.minecraft1.video.voice.VoiceDiscovery found = videoStudio.discoverVoices();
+            String summary = "Video Studio: " + found.voices().size() + " voice(s) in " + found.folder()
+                + (videoStudio.ffmpeg().isPresent() ? "; FFmpeg ready" : "; FFmpeg not found (needed to export videos)");
+            javax.swing.SwingUtilities.invokeLater(() -> log(summary));
+        }, "voice-discovery");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private void openVideoStudio() {
+        if (studioWindow == null) {
+            studioWindow = new VideoStudioWindow(videoStudio, timeline::snapshot, timeline::describe,
+                VideoStudio.replayVideosFolder(settings.linkFile()));
+        }
+        studioWindow.showStudio();
     }
 
     // ------------------------------------------------------------------ layout
@@ -213,7 +240,11 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         settingsButton.addActionListener(event -> openSettings());
         JButton helpButton = new JButton("Help");
         helpButton.addActionListener(event -> showHelp());
+        JButton studioButton = new JButton("Video Studio...");
+        studioButton.setToolTipText("Turn a recorded build into a narrated video (prompt, story, local voice, MP4 export).");
+        studioButton.addActionListener(event -> openVideoStudio());
         right.add(connectButton);
+        right.add(studioButton);
         right.add(settingsButton);
         right.add(helpButton);
         bar.add(right, BorderLayout.EAST);
@@ -656,6 +687,12 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         if (status == null) {
             return;
         }
+        boolean wasRecording = recordingStatus != null && recordingStatus.recording();
+        if (status.recording() && !wasRecording) {
+            timeline.recordingStarted();
+        } else if (!status.recording() && wasRecording) {
+            timeline.recordingStopped();
+        }
         this.recordingStatus = status;
         if (status.recording()) {
             recordingDot.setColor(RED);
@@ -855,6 +892,10 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             + "<li>Click <b>Build in Minecraft</b>. It is built at your position in the game.</li></ol>"
             + "<p><b>Tip:</b> Minecraft pauses single-player games when you switch windows. Press <b>F3+P</b> in the game "
             + "(or open the world to LAN) so building continues while you use this app.</p>"
+            + "<h3>Narrated build videos</h3>"
+            + "<p>Click <b>Video Studio...</b>: type a prompt, add the recorded footage, pick a local voice, then "
+            + "<b>Write story</b> and <b>Export video</b>. Needs FFmpeg; narration needs Piper and a voice pack. "
+            + "See Help inside the Video Studio for details.</p>"
             + "<p>Everything runs on your computer; nothing is sent to the internet.</p></body></html>",
             "Help", JOptionPane.INFORMATION_MESSAGE);
     }
@@ -954,6 +995,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     private void updateJob(JobStatus status) {
         JobStatus previous = job;
         job = status;
+        timeline.onJob(status);
         progressBar.setValue((int) Math.round(status.percent() * 10));
         String verb = "undo".equals(status.kind()) ? "Undoing" : "Building";
         String text = switch (status.state()) {
@@ -1031,6 +1073,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     }
 
     private void showPlan(PlanSummary plan) {
+        timeline.plan(plan);
         mapPanel.setPlan(plan);
         summaryArea.setText(plan.text());
         summaryArea.setCaretPosition(0);

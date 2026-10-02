@@ -1,0 +1,113 @@
+package com.annaschneider.minecraft1.desktop;
+
+import com.annaschneider.minecraft1.video.story.OllamaClient;
+import com.annaschneider.minecraft1.video.voice.VoiceFolders;
+
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.Objects;
+import java.util.prefs.Preferences;
+
+/** Video Studio choices: tool paths, folders, local AI and the selected voice (kept in its own preferences node). */
+final class VideoStudioSettings {
+    private final Preferences preferences;
+
+    VideoStudioSettings() {
+        this(Preferences.userNodeForPackage(VideoStudioSettings.class).node("video-studio"));
+    }
+
+    VideoStudioSettings(Preferences preferences) {
+        this.preferences = Objects.requireNonNull(preferences);
+    }
+
+    /** Explicit ffmpeg path (file or folder); blank = search {@code ARCHITECT_FFMPEG} and PATH. */
+    String ffmpegPath() {
+        return preferences.get("ffmpegPath", "");
+    }
+
+    void setFfmpegPath(String value) {
+        putOrRemove("ffmpegPath", value);
+    }
+
+    /** Explicit piper path (file or folder); blank = search {@code ARCHITECT_PIPER}, the voices folder and PATH. */
+    String piperPath() {
+        return preferences.get("piperPath", "");
+    }
+
+    void setPiperPath(String value) {
+        putOrRemove("piperPath", value);
+    }
+
+    Path voicesFolder() {
+        return pathOr("voicesFolder", VoiceFolders.defaultVoicesFolder());
+    }
+
+    void setVoicesFolder(String value) {
+        putOrRemove("voicesFolder", value);
+    }
+
+    Path outputFolder() {
+        return pathOr("outputFolder", defaultOutputFolder());
+    }
+
+    void setOutputFolder(String value) {
+        putOrRemove("outputFolder", value);
+    }
+
+    boolean useLocalAi() {
+        return preferences.getBoolean("useLocalAi", false);
+    }
+
+    void setUseLocalAi(boolean value) {
+        preferences.putBoolean("useLocalAi", value);
+    }
+
+    String ollamaUrl() {
+        return preferences.get("ollamaUrl", OllamaClient.DEFAULT_URL);
+    }
+
+    void setOllamaUrl(String value) {
+        putOrRemove("ollamaUrl", value);
+    }
+
+    String ollamaModel() {
+        return preferences.get("ollamaModel", OllamaClient.DEFAULT_MODEL);
+    }
+
+    void setOllamaModel(String value) {
+        putOrRemove("ollamaModel", value);
+    }
+
+    /** Id of the selected voice; blank = no narration. */
+    String voiceId() {
+        return preferences.get("voiceId", "");
+    }
+
+    void setVoiceId(String value) {
+        putOrRemove("voiceId", value);
+    }
+
+    static Path defaultOutputFolder() {
+        return Path.of(System.getProperty("user.home", "."), "Videos", "Minecraft Architect");
+    }
+
+    private Path pathOr(String key, Path fallback) {
+        String saved = preferences.get(key, "");
+        if (saved.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Path.of(saved);
+        } catch (InvalidPathException ex) {
+            return fallback;
+        }
+    }
+
+    private void putOrRemove(String key, String value) {
+        if (value == null || value.isBlank()) {
+            preferences.remove(key);
+        } else {
+            preferences.put(key, value.strip());
+        }
+    }
+}

@@ -40,6 +40,8 @@ class StoryGenerationTest {
         assertEquals(PromptAnalysis.MAX_SECONDS, PromptAnalysis.of("9999 seconds").targetSeconds());
         assertEquals(PromptAnalysis.MIN_SECONDS, PromptAnalysis.of("a 3s clip").targetSeconds());
         assertEquals(PromptAnalysis.DEFAULT_SECONDS, PromptAnalysis.of("castle story").targetSeconds());
+        assertFalse(PromptAnalysis.of("castle story").lengthGiven());
+        assertTrue(english.lengthGiven());
     }
 
     @Test

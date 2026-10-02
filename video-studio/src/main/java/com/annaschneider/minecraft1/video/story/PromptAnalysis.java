@@ -11,8 +11,9 @@ import java.util.regex.Pattern;
  * @param targetSeconds requested length (clamped to {@link #MIN_SECONDS}..{@link #MAX_SECONDS}; default 60)
  * @param language      "vi" when the prompt is written in Vietnamese, otherwise "en"
  * @param fastPaced     whether the prompt asks for a timelapse / fast video
+ * @param lengthGiven   whether the prompt itself names a length (otherwise {@code targetSeconds} is the default)
  */
-public record PromptAnalysis(String subject, double targetSeconds, String language, boolean fastPaced) {
+public record PromptAnalysis(String subject, double targetSeconds, String language, boolean fastPaced, boolean lengthGiven) {
     public static final double MIN_SECONDS = 15;
     public static final double MAX_SECONDS = 600;
     public static final double DEFAULT_SECONDS = 60;
@@ -38,6 +39,7 @@ public record PromptAnalysis(String subject, double targetSeconds, String langua
             text = text.substring(0, MAX_PROMPT_LENGTH);
         }
         double seconds = DEFAULT_SECONDS;
+        boolean lengthGiven = true;
         String rest = text;
         Matcher minutes = MINUTES.matcher(text);
         Matcher secs = SECONDS.matcher(text);
@@ -47,6 +49,8 @@ public record PromptAnalysis(String subject, double targetSeconds, String langua
         } else if (minutes.find()) {
             seconds = Integer.parseInt(minutes.group(1)) * 60.0;
             rest = minutes.replaceFirst(" ");
+        } else {
+            lengthGiven = false;
         }
         seconds = Math.max(MIN_SECONDS, Math.min(MAX_SECONDS, seconds));
         String language = VIETNAMESE.matcher(text).find() ? "vi" : "en";
@@ -58,7 +62,7 @@ public record PromptAnalysis(String subject, double targetSeconds, String langua
             int cut = subject.lastIndexOf(' ', 80);
             subject = subject.substring(0, cut > 30 ? cut : 80).strip();
         }
-        return new PromptAnalysis(subject, seconds, language, fast);
+        return new PromptAnalysis(subject, seconds, language, fast, lengthGiven);
     }
 
     public boolean vietnamese() {
