@@ -10,6 +10,7 @@ import com.annaschneider.minecraft1.video.story.StoryService;
 import com.annaschneider.minecraft1.video.voice.NarrationClip;
 import com.annaschneider.minecraft1.video.voice.NarrationException;
 import com.annaschneider.minecraft1.video.voice.Narrator;
+import com.annaschneider.minecraft1.video.voice.VoicePack;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -67,8 +68,34 @@ public final class VideoPipeline {
         return stories.generate(request);
     }
 
+    /** FFmpeg, when it is installed. */
+    public Optional<FfmpegTool> ffmpeg() {
+        return ffmpeg.get();
+    }
+
+    /** Why {@code voice} cannot be spoken right now (e.g. Piper missing), or empty when it can. */
+    public Optional<String> narrationUnavailable(VoicePack voice) {
+        return narrator.unavailableReason(voice);
+    }
+
+    /** Narration stage on its own: one WAV per scene in {@code folder}; scenes grow to fit their narration. */
+    public Narration narrate(Storyboard storyboard, VoicePack voice, Path folder, Consumer<String> progress) throws NarrationException {
+        Map<Integer, NarrationClip> clips = narrator.narrate(storyboard, voice, folder, progress).stream()
+            .collect(Collectors.toMap(NarrationClip::sceneIndex, Function.identity()));
+        return new Narration(fitToNarration(storyboard, clips), clips);
+    }
+
     /** Stages 2-5: probe footage, narrate, plan segments, render the MP4 and write subtitles and script. */
     public ExportResult export(ExportRequest request, Consumer<String> progress) throws VideoExportException {
+        return export(request, null, null, progress);
+    }
+
+    /**
+     * @param narrated narration made beforehand (e.g. in parallel with the recording), or {@code null} to narrate
+     *                 {@code request.voice()} here
+     * @param stem     exact output file stem, or {@code null} for the base name plus a timestamp
+     */
+    ExportResult export(ExportRequest request, Narration narrated, String stem, Consumer<String> progress) throws VideoExportException {
         FfmpegTool tool = ffmpeg.get().orElseThrow(() -> new VideoExportException(FfmpegTool.MISSING_MESSAGE));
         List<String> warnings = new ArrayList<>();
         Path work;
@@ -87,7 +114,10 @@ public final class VideoPipeline {
 
             Storyboard storyboard = request.storyboard();
             Map<Integer, NarrationClip> narration = Map.of();
-            if (request.voice() != null) {
+            if (narrated != null) {
+                storyboard = narrated.storyboard();
+                narration = narrated.clips();
+            } else if (request.voice() != null) {
                 progress.accept("Generating narration with " + request.voice().name() + "...");
                 try {
                     narration = narrator.narrate(storyboard, request.voice(), work, progress).stream()
@@ -109,7 +139,9 @@ public final class VideoPipeline {
                 }
             }
 
-            String stem = fileStem(request.baseName(), storyboard.title()) + "-" + LocalDateTime.now(clock).format(STAMP);
+            if (stem == null) {
+                stem = stamped(request.baseName(), storyboard.title());
+            }
             Path video = request.outputFolder().resolve(stem + ".mp4");
             new VideoRenderer(tool, request.options()).render(segments, audio, work, video, progress);
 
@@ -132,6 +164,11 @@ public final class VideoPipeline {
                 deleteRecursively(work);
             }
         }
+    }
+
+    /** Output file stem: safe name plus the current time, e.g. {@code sky-palace-20261002-083000}. */
+    String stamped(String preferred, String fallback) {
+        return fileStem(preferred, fallback) + "-" + LocalDateTime.now(clock).format(STAMP);
     }
 
     private static List<FootageClip> probeFootage(FfmpegTool tool, List<Path> files, List<String> warnings,

@@ -28,7 +28,16 @@ public final class SystemProcessRunner implements ProcessRunner {
         } catch (IOException ignored) {
             // the program may exit without reading its input; its output explains why
         }
-        if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+        boolean finished;
+        try {
+            finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ex) {
+            // cancelled: do not leave the program (e.g. a screen recording) running
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            throw ex;
+        }
+        if (!finished) {
             process.descendants().forEach(ProcessHandle::destroyForcibly);
             process.destroyForcibly();
             throw new IOException(command.get(0) + " did not finish within " + timeout.toSeconds() + " s");

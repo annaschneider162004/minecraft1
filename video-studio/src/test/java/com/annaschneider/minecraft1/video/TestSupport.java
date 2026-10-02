@@ -63,7 +63,7 @@ final class TestSupport {
     }
 
     /** TTS engine that writes silent WAVs of {@code secondsPerWord} per word. */
-    static final class FakeTts implements TtsEngine {
+    static class FakeTts implements TtsEngine {
         final List<String> spoken = new ArrayList<>();
         String unavailable;
         double secondsPerWord = 0.4;
