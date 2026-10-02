@@ -1,9 +1,12 @@
 package com.annaschneider.minecraft1.desktop;
 
 import com.annaschneider.minecraft1.video.ExecutableLocator;
+import com.annaschneider.minecraft1.video.ExportFlow;
 import com.annaschneider.minecraft1.video.ProcessRunner;
 import com.annaschneider.minecraft1.video.SystemProcessRunner;
 import com.annaschneider.minecraft1.video.VideoPipeline;
+import com.annaschneider.minecraft1.video.record.FootageRecorder;
+import com.annaschneider.minecraft1.video.record.ScreenRecorder;
 import com.annaschneider.minecraft1.video.render.FfmpegTool;
 import com.annaschneider.minecraft1.video.story.LocalLlmStoryGenerator;
 import com.annaschneider.minecraft1.video.story.OllamaClient;
@@ -75,11 +78,24 @@ final class VideoStudio {
         return new VideoPipeline(stories(), narrator(), this::ffmpeg);
     }
 
+    /** Records the screen with FFmpeg for the Record only / Auto-export modes. */
+    FootageRecorder recorder() {
+        return new ScreenRecorder(this::ffmpeg);
+    }
+
+    /** Record only / Narrate only / Auto-export when both complete. */
+    ExportFlow flow() {
+        return new ExportFlow(pipeline(), recorder());
+    }
+
     /** One line per optional dependency, for the log and the Tools dialog. */
     List<String> diagnostics(VoiceDiscovery voices) {
         List<String> lines = new ArrayList<>();
         lines.add(ffmpeg().map(tool -> "FFmpeg: " + tool.executable()).orElse("FFmpeg: NOT FOUND - " + FfmpegTool.MISSING_MESSAGE));
         lines.add(piper().map(path -> "Piper voice engine: " + path).orElse("Piper voice engine: NOT FOUND - " + PiperTtsEngine.MISSING_MESSAGE));
+        FootageRecorder recorder = recorder();
+        lines.add(recorder.unavailableReason().map(reason -> "Screen recording: NOT AVAILABLE - " + reason)
+            .orElse("Screen recording: " + recorder.name()));
         lines.add("Voices folder: " + settings.voicesFolder() + " (" + voices.voices().size() + " voice"
             + (voices.voices().size() == 1 ? "" : "s") + ")");
         voices.problems().forEach(problem -> lines.add("  " + problem));

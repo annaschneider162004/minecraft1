@@ -6,6 +6,7 @@ import com.annaschneider.minecraft1.link.RegionBox;
 import com.annaschneider.minecraft1.video.BuildContext;
 import com.annaschneider.minecraft1.video.BuildMilestone;
 import com.annaschneider.minecraft1.video.ExecutableLocator;
+import com.annaschneider.minecraft1.video.ExportMode;
 import com.annaschneider.minecraft1.video.ProcessRunner;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
 import org.junit.jupiter.api.Test;
@@ -70,6 +71,10 @@ class VideoStudioTest {
             assertFalse(settings.useLocalAi());
             assertEquals("http://127.0.0.1:11434", settings.ollamaUrl());
             assertEquals(VideoStudioSettings.defaultOutputFolder(), settings.outputFolder());
+            assertEquals(ExportMode.AUTO_EXPORT, settings.exportMode());
+            assertEquals(VideoStudioSettings.DEFAULT_RECORD_SECONDS, settings.recordSeconds());
+            settings.setExportMode(ExportMode.NARRATE_ONLY);
+            settings.setRecordSeconds(1_000_000);
             settings.setFfmpegPath("  C:/ffmpeg/bin/ffmpeg.exe ");
             settings.setVoicesFolder("/data/voices");
             settings.setVoiceId("vi_VN-vais1000-medium");
@@ -82,6 +87,10 @@ class VideoStudioTest {
             assertEquals("vi_VN-vais1000-medium", reopened.voiceId());
             assertTrue(reopened.useLocalAi());
             assertEquals(VideoStudioSettings.defaultOutputFolder(), reopened.outputFolder());
+            assertEquals(ExportMode.NARRATE_ONLY, reopened.exportMode());
+            assertEquals(3600, reopened.recordSeconds());
+            node.put("exportMode", "BOGUS");
+            assertEquals(ExportMode.AUTO_EXPORT, reopened.exportMode());
         } finally {
             node.removeNode();
         }
@@ -108,6 +117,8 @@ class VideoStudioTest {
             assertTrue(report.contains("Piper voice engine: NOT FOUND"), report);
             assertTrue(report.contains("lonely.onnx: missing config file"), report);
             assertTrue(report.contains("built-in templates"), report);
+            assertTrue(report.contains("Screen recording: NOT AVAILABLE"), report);
+            assertTrue(studio.flow() != null);
             assertTrue(studio.narrator().supportedEngines().contains("piper"));
         } finally {
             node.removeNode();
@@ -119,6 +130,10 @@ class VideoStudioTest {
         Path link = Path.of("/games/.minecraft/config/architect/desktop-link.json");
         assertEquals(Path.of("/games/.minecraft/replay_videos"), VideoStudio.replayVideosFolder(link));
         assertTrue(VideoStudioWindow.helpHtml().contains("voices folder"));
+        for (ExportMode mode : ExportMode.values()) {
+            assertTrue(VideoStudioWindow.helpHtml().contains(mode.label()), mode.label());
+        }
+        assertTrue(VideoStudioWindow.helpHtml().contains("Waiting for remaining job..."));
     }
 
     private static JobStatus job(long id, String state, double percent, long blocks) {

@@ -224,9 +224,11 @@ minecraft1/
 ├── architect-mod/         # Fabric entrypoint, /architect commands wired to the large-build engine
 │   ├── link/              #   DesktopBridge (desktop requests -> commands, progress push), headless LinkDemoServer
 │   └── runtime/           #   ArchitectServerRuntime (engine + bridge lifecycle for the Fabric adapter), config
-├── video-studio/          # prompt -> story -> clip plan -> narration (Piper) -> MP4 (FFmpeg); no Minecraft dependency
+├── video-studio/          # prompt -> story -> clip plan -> narration (Piper) -> MP4 (FFmpeg); ExportFlow runs
+│   │                      #   recording + narration in parallel and auto-exports; no Minecraft dependency
 │   ├── story/             #   prompt analysis, deterministic templates (EN/VI), optional local Ollama writer, fallback
-│   ├── voice/             #   voice-pack discovery/validation, TTS engine SPI, Piper engine, narrator
+│   ├── voice/             #   voice-pack discovery/validation, TTS engine SPI, Piper engine, narrator, narration track
+│   ├── record/            #   recorder SPI, FFmpeg screen recorder (gdigrab / avfoundation / x11grab)
 │   └── render/            #   FFmpeg locator/probe, segment renderer, subtitles
 └── architect-desktop/     # Windows desktop companion app (Swing), talks to the mod via architect-link
 ```
@@ -268,12 +270,16 @@ Included unit tests:
   oversized lines, timeouts and connection-refused messages
 - `architect-desktop`: plan-name suggestion/validation, picture checks (type, empty, too large), safe upload names and
   default link-file locations on Windows/macOS/Linux; Video Studio build timeline (milestones relative to the recording),
-  settings round-trip and diagnostics for missing FFmpeg/Piper and invalid voice packs
+  settings round-trip (incl. export mode and record length) and diagnostics for missing FFmpeg/Piper/screen recording and
+  invalid voice packs
 - `video-studio`: prompt analysis (length, language, timelapse), deterministic template stories and the fallback when the
   local AI is absent or answers garbage, Ollama URL/model validation, segment planning from milestones (ordering,
   trimming, timelapse speed-up, fades), voice-pack discovery/validation (missing config, bad JSON, unsupported engine,
   duplicates, symlink escapes), narration hooks, export orchestration (narrated, non-narrated when TTS fails, title cards
-  without footage, missing FFmpeg, temp-file cleanup) and, when FFmpeg is installed, a real MP4 render
+  without footage, missing FFmpeg, temp-file cleanup), the three export modes (Record only, Narrate only, Auto-export
+  when both complete), recording and narration running in parallel with automatic muxing, failures (missing FFmpeg or
+  voice backend, recording/narration/mux errors) that keep finished outputs, cancellation, EN/VI status labels, screen
+  grabber selection, the narration track and, when FFmpeg is installed, a real MP4 render
 
 ## Large-build engine (multi-million-block builds)
 
@@ -604,6 +610,44 @@ Click **Video Studio...** in the connection bar. Everything runs on this compute
    (default `Videos\Minecraft Architect`) receives `<title>-<date>.mp4` (H.264 + AAC), `.srt` subtitles and
    `-story.txt`. Temporary clips go to a `architect-video-*` temp folder that is deleted afterwards.
 
+#### Export modes and automatic voice-over export / Chế độ xuất và tự động lồng tiếng
+
+Step **5** of the Video Studio runs the whole job without a manual export. Pick a **Mode**, set **Record (seconds)** and
+click **Start** (the story is written first if needed):
+
+| Mode | What it does | Output (in the output folder) | Needs |
+|---|---|---|---|
+| **Record only** | records the screen and saves the raw video; no narration, no muxing | `<title>-<date>-recording.mp4` | FFmpeg |
+| **Narrate only** | speaks the story with the selected voice; nothing is recorded | `<title>-<date>-narration.wav`, `-story.txt`, `.srt` | Piper + a voice |
+| **Auto-export when both complete** | records **and** narrates in parallel; once both are finished the narration is muxed into the recording and the final MP4 is exported automatically | `<title>-<date>.mp4` plus the recording, narration, script and subtitles | FFmpeg, Piper + a voice |
+
+Status labels and order / Nhãn trạng thái và thứ tự:
+
+| English | Tiếng Việt | When |
+|---|---|---|
+| Checking dependencies... | Đang kiểm tra phụ thuộc... | output folder writable, FFmpeg, screen recorder, voice backend |
+| Recording video... | Đang quay video... | screen recording runs (in parallel with narration) |
+| Generating narration... | Đang tạo giọng đọc... | the local voice speaks every scene (in parallel with recording) |
+| Waiting for remaining job... | Đang chờ tác vụ còn lại... | one job finished first; its output is kept while the other finishes |
+| Muxing audio and video... | Đang ghép audio và video... | both outputs are ready: narration + recording → final MP4 |
+| Export complete | Xuất video hoàn tất | the final file exists; **Open video** / **Open folder** |
+| Export failed: &lt;reason&gt; | Xuất video thất bại: &lt;reason&gt; | e.g. *FFmpeg not found*, *Narration backend unavailable*, *Recording failed*, *Narration failed*, *Failed to mux audio and video*; **Retry** starts again |
+
+`Idle → Checking dependencies → Recording + Narration → Waiting for remaining job → Muxing audio and video → Export complete`.
+The recording and narration have their own status lines. Labels follow the story language (Vietnamese prompt →
+Vietnamese labels).
+
+- If either job fails, the other is cancelled and **no final video** is written; a job that already finished keeps its
+  file (`-recording.mp4` / `-narration.wav`) so nothing is lost. Half-written recordings are deleted.
+- **Cancel** stops both jobs (FFmpeg/Piper are terminated); it is shown as *Cancelled*, not as a failure.
+- Unlike **Export video**, auto-export does not fall back to a silent video: a missing voice backend stops it up front.
+- Recording uses FFmpeg's screen grabber: Windows `gdigrab` (whole desktop), macOS `avfoundation` (screen 0, allow
+  *Screen Recording* for the app in System Settings), Linux `x11grab` (`$DISPLAY`; Wayland-only sessions are not
+  supported). Keep the Minecraft window visible (full screen works best) and start the build in the main window after
+  clicking **Start**. Scenes are spread evenly over the new recording.
+- Code: `ExportFlow` (orchestration), `ExportMode`, `FlowStage`/`FlowStatus` (labels), `record.ScreenRecorder`
+  (`FootageRecorder` SPI, so another recorder can be plugged in), `voice.NarrationTrackWriter` (narration track).
+
 Pipeline stages (module `video-studio`, usable without the game): prompt analysis → story (`TemplateStoryGenerator`, or
 `LocalLlmStoryGenerator` with automatic fallback) → narration (`Narrator` + `TtsEngine`) → scene lengths fitted to the
 narration → `SegmentPlanner` (clip selection, ordering, trimming, timelapse up to 200×, 0.5 s fades) →
@@ -641,6 +685,10 @@ the id is already used or the files point outside the voices folder.
   lists every program and every rejected voice pack.
 - *"No voices yet"* – the folder must contain both `.onnx` and `.onnx.json` with the same name.
 - *"Local AI unavailable, using templates"* – start Ollama (`ollama serve`) and pull the model, or untick **Use local AI**.
+- *Export failed: Recording failed* – **Tools...** shows whether screen recording is available (FFmpeg found, X11
+  display on Linux, screen-recording permission on macOS). The log has FFmpeg's message.
+- *Export failed: Narration backend unavailable* – pick a voice and install Piper (see above); use **Record only** if
+  you only need the video.
 - *Export failed* – the log shows the last FFmpeg lines. Re-render the replay to a standard MP4, check free disk space
   and that the output folder is writable.
 
@@ -648,7 +696,10 @@ the id is already used or the files point outside the voices folder.
 hoang*) → **ReplayMod videos...** để thêm video đã render → chọn giọng, bấm **Preview voice** để nghe thử → **Write
 story** → **Export video**. Cần cài **FFmpeg**; muốn có giọng đọc thì cài **Piper** và chép giọng (`.onnx` + `.onnx.json`)
 vào thư mục voices rồi bấm **Refresh**. Không có Piper/giọng thì video vẫn được xuất nhưng không có lời đọc; không có
-Ollama thì dùng kịch bản mẫu.
+Ollama thì dùng kịch bản mẫu. Muốn tự động: ở bước **5** chọn **Mode** → **Auto-export when both complete**, đặt
+**Record (seconds)**, bấm **Start** rồi xây trong Minecraft: app vừa quay màn hình vừa tạo giọng đọc, xong cả hai thì tự
+ghép và xuất MP4 (không cần bấm Export). **Record only** chỉ quay video thô; **Narrate only** chỉ tạo file giọng đọc
+`.wav`. Nếu một bên lỗi thì không xuất video cuối, phần đã xong được giữ lại; bấm **Retry** để thử lại.
 
 ### Hướng dẫn nhanh (tiếng Việt)
 

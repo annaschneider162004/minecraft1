@@ -1,5 +1,7 @@
 package com.annaschneider.minecraft1.desktop;
 
+import com.annaschneider.minecraft1.video.ExportFlow;
+import com.annaschneider.minecraft1.video.ExportMode;
 import com.annaschneider.minecraft1.video.story.OllamaClient;
 import com.annaschneider.minecraft1.video.voice.VoiceFolders;
 
@@ -8,8 +10,11 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.prefs.Preferences;
 
-/** Video Studio choices: tool paths, folders, local AI and the selected voice (kept in its own preferences node). */
+/** Video Studio choices: tool paths, folders, local AI, the selected voice and export mode (kept in its own preferences node). */
 final class VideoStudioSettings {
+    static final int DEFAULT_RECORD_SECONDS = 120;
+    static final int MIN_RECORD_SECONDS = 5;
+
     private final Preferences preferences;
 
     VideoStudioSettings() {
@@ -85,6 +90,29 @@ final class VideoStudioSettings {
 
     void setVoiceId(String value) {
         putOrRemove("voiceId", value);
+    }
+
+    /** Mode of the Start button; Auto-export when both complete by default. */
+    ExportMode exportMode() {
+        try {
+            return ExportMode.valueOf(preferences.get("exportMode", ExportMode.AUTO_EXPORT.name()));
+        } catch (IllegalArgumentException ex) {
+            return ExportMode.AUTO_EXPORT;
+        }
+    }
+
+    void setExportMode(ExportMode mode) {
+        preferences.put("exportMode", (mode == null ? ExportMode.AUTO_EXPORT : mode).name());
+    }
+
+    /** How long Record only / Auto-export record the screen. */
+    int recordSeconds() {
+        int seconds = preferences.getInt("recordSeconds", DEFAULT_RECORD_SECONDS);
+        return Math.max(MIN_RECORD_SECONDS, Math.min((int) ExportFlow.MAX_RECORD_SECONDS, seconds));
+    }
+
+    void setRecordSeconds(int seconds) {
+        preferences.putInt("recordSeconds", seconds);
     }
 
     static Path defaultOutputFolder() {
