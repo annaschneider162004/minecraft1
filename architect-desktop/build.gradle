@@ -4,6 +4,7 @@ apply plugin: 'application'
 
 dependencies {
     implementation project(':architect-link')
+    implementation project(':video-studio')
 }
 
 application {

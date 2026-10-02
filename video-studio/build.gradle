@@ -1,0 +1,5 @@
+// Offline prompt -> story -> narrated build video pipeline. Independent of the in-game build runtime: it only needs
+// build milestones (optional), recorded footage (optional), FFmpeg for rendering and a local TTS engine for narration.
+dependencies {
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
