@@ -39,7 +39,7 @@ class RequestValidatorTest {
         assertTrue(assertThrows(LinkProtocolException.class, () -> RequestValidator.validate(LinkRequest.of(RequestType.STATUS)))
             .getMessage().contains("Request id"));
         LinkRequest oldVersion = new LinkRequest(0, "r1", RequestType.STATUS, null, null, null, null, null, null, null, null,
-            null, null, null);
+            null, null, null, null, null);
         assertTrue(assertThrows(LinkProtocolException.class, () -> RequestValidator.validate(oldVersion))
             .getMessage().contains("Unsupported protocol version 0"));
         assertTrue(error(LinkRequest.of(null)).contains("request type"));
@@ -62,7 +62,7 @@ class RequestValidatorTest {
         assertTrue(error(LinkRequest.planFromPrompt("ok", "castle", 0)).contains("Scale"));
         assertTrue(error(LinkRequest.planFromPrompt("ok", "x".repeat(501), 1)).contains("500"));
         LinkRequest both = new LinkRequest(1, null, RequestType.PLAN, null, null, null, null, null, "ok", "placeholder:a",
-            "prompt", 1, null, null);
+            "prompt", 1, null, null, null, null);
         assertTrue(error(both).contains("not both"));
         assertTrue(error(LinkRequest.build(null, "house")).contains("mode"));
         assertTrue(error(LinkRequest.build(BuildMode.TEMPLATE, null)).contains("template"));

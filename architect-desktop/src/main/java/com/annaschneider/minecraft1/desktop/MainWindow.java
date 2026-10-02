@@ -109,6 +109,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     private final JButton undoButton = new JButton("Undo last build");
     private final JButton startRecordButton = new JButton("Start Recording");
     private final JButton stopRecordButton = new JButton("Stop & Save");
+    private final javax.swing.JCheckBox cinematicCameraBox = new javax.swing.JCheckBox("Cinematic camera", true);
+    private final javax.swing.JCheckBox npcBuildersBox = new javax.swing.JCheckBox("Builder NPCs", true);
+    private final JLabel cameraStatusLabel = new JLabel(" ");
     private final StatusDot recordingDot = new StatusDot();
     private final JLabel recordingStatusLabel = new JLabel("Recording: Not connected");
     private final JProgressBar progressBar = new JProgressBar(0, 1000);
@@ -480,6 +483,18 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         recordBar.add(startRecordButton);
         recordBar.add(stopRecordButton);
 
+        cinematicCameraBox.setToolTipText("Film the build with the automatic cinematic camera during Build + Record.");
+        cinematicCameraBox.addActionListener(event -> {
+            if (!cinematicCameraBox.isSelected()) {
+                sendCamera(LinkRequest.camera("stop"));
+            }
+        });
+        npcBuildersBox.setToolTipText("Show villager workers around the sections currently being built.");
+        npcBuildersBox.addActionListener(event -> sendCamera(LinkRequest.npcBuilders(npcBuildersBox.isSelected())));
+        recordBar.add(cinematicCameraBox);
+        recordBar.add(npcBuildersBox);
+        recordBar.add(cameraStatusLabel);
+
         JPanel combined = new JPanel(new BorderLayout(0, 6));
         combined.add(mainRow, BorderLayout.CENTER);
         combined.add(recordBar, BorderLayout.SOUTH);
@@ -556,26 +571,58 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             return;
         }
         autoStopRecordingOnJobComplete = true;
+        boolean cinematic = cinematicCameraBox.isSelected();
         runBusy("Starting recording before build...", client -> {
             LinkMessage rec = client.call(LinkRequest.recordStart());
             if (!rec.isOk()) {
                 return rec;
             }
+            boolean filming = false;
+            if (cinematic) {
+                LinkMessage camera = client.call(LinkRequest.camera("auto"));
+                filming = camera.isOk();
+                javax.swing.SwingUtilities.invokeLater(() -> showCameraMessage(camera.message()));
+            }
+            LinkMessage result;
             if (selection.mode() == BuildMode.TEMPLATE) {
-                return client.call(LinkRequest.build(BuildMode.TEMPLATE, selection.template()));
-            }
-            if (!selection.key().equals(plannedKey)) {
-                LinkMessage plan = ensurePlan(client, selection);
-                if (!plan.isOk()) {
-                    return plan;
+                result = client.call(LinkRequest.build(BuildMode.TEMPLATE, selection.template()));
+            } else {
+                if (!selection.key().equals(plannedKey)) {
+                    LinkMessage plan = ensurePlan(client, selection);
+                    if (!plan.isOk()) {
+                        result = plan;
+                        if (filming) {
+                            client.call(LinkRequest.camera("stop"));
+                        }
+                        return result;
+                    }
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        showPlan(plan.plan());
+                        log(plan.message());
+                    });
                 }
-                javax.swing.SwingUtilities.invokeLater(() -> {
-                    showPlan(plan.plan());
-                    log(plan.message());
-                });
+                result = client.call(LinkRequest.build(BuildMode.PLAN, selection.planName()));
             }
-            return client.call(LinkRequest.build(BuildMode.PLAN, selection.planName()));
+            if (!result.isOk() && filming) {
+                // the build never started: do not leave the player stuck in a cinematic view
+                client.call(LinkRequest.camera("stop"));
+            }
+            return result;
         }, result -> { });
+    }
+
+    /** Sends a camera/NPC request without blocking the UI; failures only show up in the log. */
+    private void sendCamera(LinkRequest request) {
+        runBusy("Updating camera settings...", client -> client.call(request),
+            result -> showCameraMessage(result.message()));
+    }
+
+    private void showCameraMessage(String message) {
+        if (message != null && !message.isBlank()) {
+            cameraStatusLabel.setText(message);
+            cameraStatusLabel.setToolTipText(message);
+            log(message);
+        }
     }
 
     private void startRecording() {

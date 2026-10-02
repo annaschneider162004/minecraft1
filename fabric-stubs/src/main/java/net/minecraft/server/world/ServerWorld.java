@@ -2,13 +2,16 @@ package net.minecraft.server.world;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.entity.Entity;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.world.border.WorldBorder;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ServerWorld implements World {
@@ -17,6 +20,7 @@ public class ServerWorld implements World {
     private final ServerChunkManager chunkManager = new ServerChunkManager();
     private final WorldBorder worldBorder = new WorldBorder();
     private final Map<BlockPos, BlockState> blocks = new HashMap<>();
+    private final List<Entity> entities = new ArrayList<>();
     private int bottomY = -64;
     private int topY = 320;
 
@@ -31,6 +35,14 @@ public class ServerWorld implements World {
 
     public ServerChunkManager getChunkManager() {
         return chunkManager;
+    }
+
+    public boolean spawnEntity(Entity entity) {
+        return entities.add(entity);
+    }
+
+    public Iterable<Entity> iterateEntities() {
+        return new ArrayList<>(entities);
     }
 
     public boolean isChunkLoaded(int chunkX, int chunkZ) {

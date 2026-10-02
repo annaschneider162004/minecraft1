@@ -18,7 +18,7 @@ MVP hiện tại chạy **offline, deterministic, bounded**, không cần API ke
 Công trình được chia theo chunk/section 16×16×16, sinh block *lười* (không giữ toàn bộ block trong RAM), xây dần theo tick
 với giới hạn block/section/thời gian mỗi tick, có tiến độ, huỷ, undo (nhật ký undo tự ghi ra đĩa khi quá lớn), lưu plan
 dạng JSON và blueprint dạng file nén `.mcab`. Có pipeline **ảnh → scene plan → blueprint** (bản MVP dùng heuristic,
-chưa phân tích pixel) và các interface sẵn cho **nhiều NPC cùng xây** và **camera cinematic**.
+chưa phân tích pixel), **camera cinematic tự động quay quá trình xây** và **NPC thợ xây hiện hình quanh khu vực đang xây**.
 
 **Mới: app Windows "Minecraft Architect" (giao diện dễ dùng).** Mở app → nhập mô tả, chọn ảnh hoặc chọn mẫu →
 bấm **Preview** để xem sơ đồ → bấm **Build in Minecraft**; có nút **Pause / Cancel / Undo**, thanh tiến độ và nhật ký.
@@ -171,7 +171,9 @@ nhấn **F3 + P**.
 - `/architect queue` / `/architect progress` / `/architect cancel`
 - `/architect pause` / `/architect resume` (a paused build keeps its place, stops placing blocks and releases its chunk tickets)
 - `/architect undo`
-- `/architect camera <orbit|flyby|top-down|reveal> [seconds]`
+- `/architect camera <auto|orbit|follow|wide|stop|status>` (live cinematic camera, see below)
+- `/architect camera <flyby|top-down|reveal> [seconds]` (plans an offline shot path around the last build)
+- `/architect npc <on|off|status>`
 - `/architect help`
 
 `[planId]` defaults to the plan most recently created or loaded by the player. Large builds (mega, image, blueprint)
@@ -216,8 +218,8 @@ minecraft1/
 │   ├── scene/             #   ScenePlan/SceneRegion model, compiler, preview
 │   ├── image/             #   image reference validation, analysis SPI, deterministic planner, pipeline
 │   ├── persistence/       #   JSON plan store, compact .mcab blueprint codec/store
-│   ├── npc/               #   multi-agent interfaces + work partitioner (future NPC builders)
-│   └── camera/            #   camera paths, shot planner, recorder interface (future cinematic camera)
+│   ├── npc/               #   multi-agent model, work partitioner, crew coordinator (visible NPC builders)
+│   └── camera/            #   camera paths, shot planner, director + live cinematic camera state machine
 ├── architect-link/        # Architect Link protocol v1: shared request/response schema, validation, localhost server/client
 ├── architect-mod/         # Fabric entrypoint, /architect commands wired to the large-build engine
 │   ├── link/              #   DesktopBridge (desktop requests -> commands, progress push), headless LinkDemoServer
@@ -242,17 +244,21 @@ Included unit tests:
 - `large-build`: section key packing/order, chunk partitioning, rotation/mirror (checked against the domain
   `Blueprint`), streamed procedural blueprints vs. brute force, build queue budgets/conflicts/limits/chunk waiting/
   cancel/undo with disk-spilled journals, jobs staying in the world they were started in, `.mcab` round-trip and corruption, JSON plan store, upload path safety and
-  image header parsing, planner determinism and scaling (scale 16 > 10M blocks), NPC work partitioning, camera shots
+  image header parsing, planner determinism and scaling (scale 16 > 10M blocks), NPC work partitioning, camera shots,
+  the cinematic camera state machine (modes, stale updates, pause, terminal states) and the NPC crew coordinator
+  (bounded crews, task assignment, pause/resume, cleanup)
 - `architect-mod`: legacy commands plus image plan/preview/build/cancel/undo, mega builds with rotation/mirror,
-  export + saved blueprint build, pause/resume, and user-facing error messages; `DesktopBridge` end-to-end over a real
+  export + saved blueprint build, pause/resume, `camera`/`npc` commands (live modes per player, legacy shot planning),
+  camera packet round-trips and stale-job rejection, and user-facing error messages; `DesktopBridge` end-to-end over a real
   socket (hello/token, missing player, prompt plan, picture upload, template preview, build/pause/resume/cancel/undo,
   progress push, port fallback); `fabric.mod.json` (expanded version, dependencies, entrypoints) and a check that no
   common class references client-only code. Headless mode additionally runs `src/stubTest`: the Fabric entrypoint
   driven through stubbed Fabric events (hook registration, `/architect build house` placing blocks and undoing them,
   console/failed commands as feedback, `desktop-link.json` in `<config>/architect` created on start and deleted on
   stop, the desktop app seeing the real player name, fresh runtime after reopening a world, chunk tickets released on
-  completion and shutdown), `FabricBlockWorld` (ids, height/border limits, tickets, server-thread guard) and
-  `FabricPlayerDirectory` (named/single/multiple/no players, current world)
+  completion and shutdown), the builder NPC crew against stub entities (bounded tagged crews, no block writes, removal
+  on every terminal state and on shutdown, orphan sweep, job isolation), `FabricBlockWorld` (ids, height/border limits,
+  tickets, server-thread guard) and `FabricPlayerDirectory` (named/single/multiple/no players, current world)
 - `architect-link`: request validation (ids, plan names, sources, prompt/scale limits, base64 image size, player
   names), JSON codec round-trips and lowercase wire names, link-file read/write, server/client handshake, wrong token,
   oversized lines, timeouts and connection-refused messages
@@ -290,8 +296,8 @@ for 10k blocks but not for 10–50 million. The `large-build` module never mater
 4. **Undo journal.** Previous block states are recorded in primitive arrays and, above `journalMemoryEntries`
    (default 262,144), spilled to a gzip file in `<dataDir>/journals/`. Undo streams the journal back through the queue.
    Only blocks that actually change are journaled, so a 20M-block build keeps its undo data on disk, not in the heap.
-5. **Listeners** (`BuildListener`) are notified when a job starts, a section completes and a job finishes – this is the
-   hook for NPC animation, the camera director and progress HUDs.
+5. **Listeners** (`BuildListener`) are notified when a job starts, a section completes and a job finishes – this drives
+   the builder NPC crews, the camera director and progress HUDs.
 
 ### Persistence
 
@@ -362,18 +368,45 @@ uploads/<file>  ──ImageReferenceResolver──▶ ImageReference (validated,
    `ScenePlanStore`, then let the player `image preview` / `image build` it. Never call a network service inside the tick.
 4. Keep API keys in server config/environment, never in the repository. Nothing in this module requires network access.
 
-### NPC and camera readiness
+### Cinematic camera and visible builder NPCs
 
-- `npc/`: `BuildAgent` (id, role, position, `assign(AgentTask)`), `AgentRole` (planner, builder, decorator, road worker,
-  camera assistant), `NpcBuildCoordinator` (a `BuildListener` that registers agents and distributes work) and
-  `AgentWorkPartitioner`, which splits a blueprint's sorted section keys (`ProceduralBlueprint.sectionKeys()`) into
-  balanced, spatially coherent slices that never share a chunk column. NPCs are meant to *visualise* work (walk to their
-  slice, play placement animations); block writes stay in the budgeted `BuildQueue`.
-- `camera/`: `CameraKeyframe`/`CameraPath` (with interpolation), `ShotType` (orbit, fly-by, top-down, reveal),
-  `CameraShotPlanner` + `DeterministicShotPlanner` (pure math, Minecraft yaw/pitch conventions), `BuildCameraDirector`
-  (a `BuildListener` that tracks the target and the completed area per player) and `CameraRecorder` (playback interface;
-  the implementation belongs in client-only or spectator-camera code). `/architect camera orbit` already plans a shot
-  around the player's current/last build.
+Both features are live in the Fabric runtime and are built on the same abstractions as before.
+
+**Cinematic camera.** `BuildCameraDirector` (a `BuildListener`) tracks, per player, the job being built, the bounds
+completed so far and the section at the build frontier. `ServerCameraCoordinator` sends that snapshot to the player's
+client as a coalesced `architect:camera_state` packet (at most one every `cameraUpdateTicks` ticks — never one per
+placed block), and `architect:camera_mode` carries the chosen mode. On the client, `ClientCinematicCamera` feeds the
+packets into the platform-neutral `CinematicCameraController`, which produces a smoothed pose; the pose is applied to an
+invisible, client-only armour stand used as the render view entity through `MinecraftClient.setCameraEntity`. **The
+player body is never moved or teleported.**
+
+| command | shot |
+|---|---|
+| `/architect camera auto` | switches between orbit, follow and wide every `cameraAutoShotSeconds` |
+| `/architect camera orbit` | circles the area completed so far |
+| `/architect camera follow` | stays close to the section currently being built |
+| `/architect camera wide` | establishing shot framing the whole planned bounds |
+| `/architect camera stop` | stops filming and restores your view |
+| `/architect camera status` | prints the current mode |
+
+The original view, perspective and HUD are restored when you stop the camera, when the job completes, is cancelled or
+fails, when the recording is stopped, when you leave the world and when the client disconnects. Updates belonging to an
+older job are ignored, so a new build never gets filmed with stale geometry. Camera commands only affect the player who
+ran them.
+
+**Visible builder NPCs.** `BuildCrewCoordinator` (the `NpcBuildCoordinator` implementation) creates one crew per build
+job: a bounded number of workers (`npcMaxWorkers`, and at most one per `npcSectionsPerWorker` sections, so small builds
+get a small crew), each given a slice of the job's sections by `AgentWorkPartitioner`. `VillagerWorkerFactory` turns
+those agents into villagers named after their role (Foreman, Builder, Decorator, Material Runner), which are
+repositioned on a ring around the active section every `npcUpdateSections` completed sections and look at the blocks
+being placed. Workers are AI-disabled, invulnerable, silent, weightless, cannot pick up loot and are tagged
+`architect_worker`, so they never open doors, trample crops, wander off or interfere with gameplay — and the cleanup
+sweep only ever touches entities this mod created. They are removed when the job completes, is cancelled, fails or
+leaves the queue, when NPCs are disabled and when the server stops; a sweep on server start also removes any worker left
+behind by a crash. **NPCs are purely cosmetic: every block is still placed by the budgeted `BuildQueue`.**
+
+Use `/architect npc off` (or the desktop toggle) to disable them; they are also skipped for chunks the build has not
+prepared yet, because cosmetic entities never force chunks to load.
 
 ### How the Fabric runtime is wired
 
@@ -395,8 +428,8 @@ uploads/<file>  ──ImageReferenceResolver──▶ ImageReference (validated,
   dimension; the overworld is only the fallback for the tick call.
 - `FabricPlayerDirectory` resolves the desktop app's player through `server.getPlayerManager()`: the named player, the
   only player online, or — with several players and no name — the alphabetically first one.
-- `ArchitectClientMod` (`client` entrypoint) only handles the optional ReplayMod recording channel; no common class
-  references client-only code, so dedicated servers start without it.
+- `ArchitectClientMod` (`client` entrypoint) handles the optional ReplayMod recording channel and the cinematic camera
+  packets; no common class references client-only code (a test enforces it), so dedicated servers start without it.
 
 ### Configuration (`-Darchitect.<name>=<value>`)
 
@@ -410,6 +443,19 @@ uploads/<file>  ──ImageReferenceResolver──▶ ImageReference (validated,
 | `maxExportSections` | 1,000,000 | 1..4,000,000 |
 | `maxImageScale` | 16 | 1..24 |
 | `dataDir` | temp dir | any writable directory |
+| `camera` | true | `false` disables the cinematic camera server-side |
+| `cameraMode` | `off` | `off`, `auto`, `orbit`, `follow`, `wide` — mode used before a player chooses one |
+| `cameraUpdateTicks` | 10 | 2..200 (how often a camera state packet may be sent) |
+| `cameraOrbitDistance` | 18 | 3..128 |
+| `cameraOrbitHeight` | 12 | 1..96 |
+| `cameraOrbitSpeed` | 9 | 1..90 degrees per second |
+| `cameraAutoShotSeconds` | 12 | 3..120 |
+| `cameraMaxSpeed` | 18 | 1..64 blocks per second |
+| `cameraMaxDistance` | 192 | 16..512 |
+| `npcBuilders` | true | `false` disables the visible builder NPCs |
+| `npcMaxWorkers` | 4 | 1..12 |
+| `npcSectionsPerWorker` | 64 | 16..100000 |
+| `npcUpdateSections` | 2 | 1..64 |
 | `link` | true | `false` disables the desktop link |
 | `linkPort` | 47821 | 1024..65535 (the next free port is used if busy) |
 
@@ -462,6 +508,9 @@ Minecraft name in **Player name**. Settings are remembered.
 | *No player is in a world yet* (orange dot) | Enter a world. You can already prepare plans and previews. |
 | *Minecraft did not answer in time* | The game is paused — press **F3 + P** or open to LAN. |
 | *Connection refused / token rejected* | Minecraft was restarted; the app reconnects by itself with the new token. |
+| *Recording unavailable (ReplayMod not active)* | ReplayMod is optional: install it for 1.20.1 to record, or keep building without it — the cinematic camera still works and the recording buttons only show a message. |
+| The cinematic camera does not activate | Check `/architect camera status`, make sure a build is running (the camera needs job bounds), that the mod is installed **on the client** too, and that the server does not run with `-Darchitect.camera=false`. |
+| No workers appear around the build | Check `/architect npc status`; workers only spawn in chunks the build already prepared, their number scales with the job size (`npcSectionsPerWorker`), and `-Darchitect.npcBuilders=false` disables them. |
 | Port 47821 is used by another program | The mod uses the next free port automatically; the app reads it from the link file. Or set `-Darchitect.linkPort=<port>` in the launcher's JVM arguments. |
 
 ### How to use (UI flow)
@@ -475,8 +524,10 @@ Minecraft name in **Player name**. Settings are remembered.
 │ Size: ──●────── (scale 1..16, block estimate)│  "+" = you        │
 │ Name: white-palace          [ Preview ]     │  plan summary text│
 ├──────────── 3. Build it in Minecraft ───────┴───────────────────┤
-│ [Build in Minecraft] [Pause/Resume] [Cancel] [Undo last build]  │
+│ [Build in Minecraft] [Build + Record] [Pause/Resume] [Cancel]   │
 │ ████████░░░░ 42% (running)          notice line                 │
+│ Recording: ● idle [Start Recording][Stop & Save]                │
+│            [x] Cinematic camera  [x] Builder NPCs   camera info │
 ├──────────── Activity log ───────────────────────────────────────┤
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -490,6 +541,16 @@ Minecraft name in **Player name**. Settings are remembered.
 4. **Build in Minecraft** – builds at your current position (large plans snap to the chunk grid). The progress bar
    and log update live. **Pause/Resume** stops and continues, **Cancel** stops for good (placed blocks stay and can be
    undone), **Undo last build** restores the previous blocks. Cancel and Undo ask for confirmation.
+
+5. **Build + Record** – one click that (1) starts the in-game recording, (2) switches your view to the automatic
+   cinematic camera (if **Cinematic camera** is ticked), (3) submits the build, (4) follows it to the end and (5) stops
+   and saves the recording, which also returns you to your normal view. If the build cannot be started, the camera is
+   switched off again. **Start Recording** / **Stop & Save** do the same steps without building.
+   **Builder NPCs** toggles the visible workers for the whole server (same as `/architect npc on|off`).
+
+Recording uses **ReplayMod**, an *optional* dependency reached only through reflection in `ReplayModBackend`: if it is
+not installed, the recording controls report "Recording unavailable" instead of failing, and the cinematic camera and
+builder NPCs keep working.
 
 Everything works offline; no account or API key is needed. Try it without Minecraft (two terminals):
 
@@ -551,6 +612,9 @@ gradle :architect-desktop:runWithDemo    & rem the app, connected to the demo
 - Queued/running jobs and undo history are kept in memory: a server restart drops unfinished builds (placed blocks stay)
   and undo history (spilled journal files are left in `journals/`). Resume-after-restart is future work.
 - Undo restores block states only (no block entities/NBT); generators only emit plain blocks.
-- NPC and camera systems are interfaces and planning logic only; no entities are spawned and no camera is moved yet.
+- The cinematic camera avoids terrain with a bounded upward raycast only: it can still clip through overhangs, glass or
+  very dense builds, and its distance, altitude and speed are clamped rather than path-planned.
+- Builder NPCs are cosmetic: they are teleported around the frontier instead of pathfinding, they are not pushable or
+  damageable, they carry no items and they do not persist across a restart (they are removed on shutdown).
 - The picture uploaded from the desktop app is analysed with the same heuristic planner (see above); the preview is a
   top-down region map, not a 3D render.

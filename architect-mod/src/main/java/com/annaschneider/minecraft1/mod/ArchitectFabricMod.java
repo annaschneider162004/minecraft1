@@ -3,11 +3,17 @@ package com.annaschneider.minecraft1.mod;
 import com.annaschneider.minecraft1.domain.Vec3i;
 import com.annaschneider.minecraft1.link.LinkInfo;
 import com.annaschneider.minecraft1.link.RecordingStatus;
+import com.annaschneider.minecraft1.largebuild.camera.CameraMode;
+import com.annaschneider.minecraft1.largebuild.npc.BuildCrewCoordinator;
+import com.annaschneider.minecraft1.mod.camera.ServerCameraCoordinator;
+import com.annaschneider.minecraft1.mod.command.ArchitectCommandEngine;
 import com.annaschneider.minecraft1.mod.command.CommandResult;
+import com.annaschneider.minecraft1.mod.npc.VillagerWorkerFactory;
 import com.annaschneider.minecraft1.mod.fabric.FabricBlockWorld;
 import com.annaschneider.minecraft1.mod.fabric.FabricPlayerDirectory;
 import com.annaschneider.minecraft1.mod.recording.RecordingChannels;
 import com.annaschneider.minecraft1.mod.recording.ServerRecordingCoordinator;
+import com.annaschneider.minecraft1.mod.runtime.ArchitectConfig;
 import com.annaschneider.minecraft1.mod.runtime.ArchitectServerRuntime;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -16,6 +22,7 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.MinecraftServer;
@@ -36,6 +43,8 @@ public final class ArchitectFabricMod implements ModInitializer {
     private MinecraftServer currentServer;
     private ArchitectServerRuntime runtime;
     private FabricPlayerDirectory playerDirectory;
+    private ServerCameraCoordinator cameraCoordinator;
+    private BuildCrewCoordinator crew;
 
     @Override
     public void onInitialize() {
@@ -51,6 +60,13 @@ public final class ArchitectFabricMod implements ModInitializer {
 
         // Hook server tick
         ServerTickEvents.END_SERVER_TICK.register(this::onEndServerTick);
+
+        // A leaving player must not keep a camera session alive
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            if (cameraCoordinator != null && handler != null && handler.player != null) {
+                cameraCoordinator.forget(handler.player.getUuid());
+            }
+        });
 
         // Hook client status networking packets
         ServerPlayNetworking.registerGlobalReceiver(RecordingChannels.RECORD_STAT_CHANNEL, (server, player, handler, buf, responseSender) -> {
@@ -151,6 +167,7 @@ public final class ArchitectFabricMod implements ModInitializer {
             .orElse("1.0.0");
         ServerRecordingCoordinator recordingCoordinator = new ServerRecordingCoordinator(server);
         this.runtime = new ArchitectServerRuntime(configDir, playerDirectory, version, recordingCoordinator);
+        startCinematics(server);
 
         Optional<LinkInfo> link = runtime.startLink();
         if (link.isPresent()) {
@@ -158,6 +175,48 @@ public final class ArchitectFabricMod implements ModInitializer {
                 + ". Link file written to config/architect/desktop-link.json");
         } else {
             LOGGER.warning("[Architect] " + runtime.linkError().orElse("Desktop link failed to start."));
+        }
+    }
+
+    /** Wires the cinematic camera and the visible builder NPCs to the live build queue. */
+    private void startCinematics(MinecraftServer server) {
+        ArchitectCommandEngine engine = runtime.engine();
+        this.cameraCoordinator = new ServerCameraCoordinator(server, engine.cameraDirector());
+        engine.setCameraControl(new ArchitectCommandEngine.CameraControl() {
+            @Override
+            public String setMode(java.util.UUID playerId, CameraMode mode) {
+                return cameraCoordinator.setMode(playerId, mode);
+            }
+
+            @Override
+            public String describe(java.util.UUID playerId) {
+                return "Cinematic camera: " + cameraCoordinator.mode(playerId).id()
+                    + (ArchitectConfig.CAMERA_ENABLED ? "." : " (disabled on this server).");
+            }
+        });
+
+        this.crew = new BuildCrewCoordinator(new VillagerWorkerFactory(server), ArchitectConfig.npcSettings());
+        runtime.engine().queue().addListener(crew);
+        engine.setCrewControl(new ArchitectCommandEngine.CrewControl() {
+            @Override
+            public String setEnabled(boolean enabled) {
+                crew.setSettings(crew.settings().withEnabled(enabled));
+                return enabled
+                    ? "Builder NPCs enabled (up to " + crew.settings().maxWorkers() + " workers per build)."
+                    : "Builder NPCs disabled; existing workers were removed.";
+            }
+
+            @Override
+            public String describe() {
+                return "Builder NPCs " + (crew.settings().enabled() ? "enabled" : "disabled")
+                    + ", " + crew.workerCount() + " worker(s) active.";
+            }
+        });
+        try {
+            // a crash may have left workers behind: they are cosmetic, so remove them before any new build starts
+            VillagerWorkerFactory.removeOrphans(server);
+        } catch (RuntimeException ex) {
+            LOGGER.warning("[Architect] Could not sweep leftover builder NPCs: " + ex);
         }
     }
 
@@ -172,6 +231,23 @@ public final class ArchitectFabricMod implements ModInitializer {
 
     /** Closes the desktop link (deleting desktop-link.json) and releases every chunk ticket; safe to call twice. */
     private void shutdown() {
+        if (crew != null) {
+            try {
+                crew.shutdown();
+                VillagerWorkerFactory.removeOrphans(currentServer);
+            } catch (RuntimeException ex) {
+                LOGGER.warning("[Architect] Error while removing builder NPCs: " + ex);
+            }
+            crew = null;
+        }
+        if (cameraCoordinator != null) {
+            try {
+                cameraCoordinator.shutdown();
+            } catch (RuntimeException ex) {
+                LOGGER.warning("[Architect] Error while stopping cinematic cameras: " + ex);
+            }
+            cameraCoordinator = null;
+        }
         if (runtime != null) {
             try {
                 runtime.close();
@@ -194,6 +270,12 @@ public final class ArchitectFabricMod implements ModInitializer {
         try {
             // Build jobs remember the world they were started in; the overworld is only the fallback for unbound jobs.
             runtime.tick(playerDirectory.worldAdapter(server.getOverworld()));
+            if (cameraCoordinator != null) {
+                cameraCoordinator.tick(runtime.engine().queue());
+            }
+            if (crew != null) {
+                crew.sync(runtime.engine().queue().snapshot());
+            }
         } catch (RuntimeException ex) {
             LOGGER.warning("[Architect] Tick failed: " + ex);
         }

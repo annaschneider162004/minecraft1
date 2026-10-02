@@ -18,6 +18,8 @@ package com.annaschneider.minecraft1.link;
  * @param scale    1..24, size of generated scenes ({@code plan})
  * @param fileName image file name ({@code upload_image})
  * @param data     base64-encoded image bytes ({@code upload_image})
+ * @param camera   cinematic camera mode id ({@code camera}): auto, orbit, follow, wide, stop or status
+ * @param npc      enables/disables the visible builder NPCs ({@code camera})
  */
 public record LinkRequest(
     int v,
@@ -33,30 +35,32 @@ public record LinkRequest(
     String prompt,
     Integer scale,
     String fileName,
-    String data
+    String data,
+    String camera,
+    Boolean npc
 ) {
     public static LinkRequest of(RequestType type) {
-        return new LinkRequest(LinkProtocol.VERSION, null, type, null, null, null, null, null, null, null, null, null, null, null);
+        return new LinkRequest(LinkProtocol.VERSION, null, type, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     public static LinkRequest hello(String token, String client, String player) {
         return new LinkRequest(LinkProtocol.VERSION, null, RequestType.HELLO, token, client, blankToNull(player), null, null,
-            null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null);
     }
 
     public static LinkRequest uploadImage(String fileName, String base64Data) {
         return new LinkRequest(LinkProtocol.VERSION, null, RequestType.UPLOAD_IMAGE, null, null, null, null, null, null,
-            null, null, null, fileName, base64Data);
+            null, null, null, fileName, base64Data, null, null);
     }
 
     public static LinkRequest planFromSource(String planId, String source, int scale) {
         return new LinkRequest(LinkProtocol.VERSION, null, RequestType.PLAN, null, null, null, null, null, planId, source,
-            null, scale, null, null);
+            null, scale, null, null, null, null);
     }
 
     public static LinkRequest planFromPrompt(String planId, String prompt, int scale) {
         return new LinkRequest(LinkProtocol.VERSION, null, RequestType.PLAN, null, null, null, null, null, planId, null,
-            prompt, scale, null, null);
+            prompt, scale, null, null, null, null);
     }
 
     public static LinkRequest preview(BuildMode mode, String templateOrPlanId) {
@@ -79,13 +83,26 @@ public record LinkRequest(
         return of(RequestType.RECORD_STATUS);
     }
 
+    /** Switches the cinematic camera of the connected player. */
+    public static LinkRequest camera(String mode) {
+        return new LinkRequest(LinkProtocol.VERSION, null, RequestType.CAMERA, null, null, null, null, null, null, null,
+            null, null, null, null, mode, null);
+    }
+
+    /** Enables or disables the visible builder NPCs. */
+    public static LinkRequest npcBuilders(boolean enabled) {
+        return new LinkRequest(LinkProtocol.VERSION, null, RequestType.CAMERA, null, null, null, null, null, null, null,
+            null, null, null, null, null, enabled);
+    }
+
     private static LinkRequest target(RequestType type, BuildMode mode, String value) {
         return new LinkRequest(LinkProtocol.VERSION, null, type, null, null, null, mode,
-            mode == BuildMode.TEMPLATE ? value : null, mode == BuildMode.PLAN ? value : null, null, null, null, null, null);
+            mode == BuildMode.TEMPLATE ? value : null, mode == BuildMode.PLAN ? value : null, null, null, null, null, null, null, null);
     }
 
     public LinkRequest withId(String newId) {
-        return new LinkRequest(v, newId, type, token, client, player, mode, template, planId, source, prompt, scale, fileName, data);
+        return new LinkRequest(v, newId, type, token, client, player, mode, template, planId, source, prompt, scale, fileName,
+            data, camera, npc);
     }
 
     /** Short description for logs; never includes the token or image data. */
@@ -102,6 +119,12 @@ public record LinkRequest(
         }
         if (fileName != null) {
             text.append(' ').append(fileName);
+        }
+        if (camera != null) {
+            text.append(' ').append(camera);
+        }
+        if (npc != null) {
+            text.append(" npc=").append(npc);
         }
         return text.toString();
     }
