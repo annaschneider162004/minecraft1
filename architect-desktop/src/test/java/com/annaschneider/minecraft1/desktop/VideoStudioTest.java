@@ -9,6 +9,7 @@ import com.annaschneider.minecraft1.video.ExecutableLocator;
 import com.annaschneider.minecraft1.video.ExportMode;
 import com.annaschneider.minecraft1.video.ProcessRunner;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
+import com.annaschneider.minecraft1.video.voice.VoicePack;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -18,12 +19,78 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.prefs.Preferences;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.swing.JComboBox;
+import javax.swing.SwingUtilities;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VideoStudioTest {
+    @Test
+    void restoresClonedSelectionAndSwitchesBetweenProfilesAndPacks(@TempDir Path dir) throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse(java.awt.GraphicsEnvironment.isHeadless(), "needs a display");
+        String id = "clone-" + UUID.randomUUID();
+        Path sample = dir.resolve(id + ".sample.wav");
+        var format = new javax.sound.sampled.AudioFormat(22050, 16, 1, true, false);
+        try (var audio = new javax.sound.sampled.AudioInputStream(
+            new java.io.ByteArrayInputStream(new byte[22050 * 6 * 2]), format, 22050 * 6)) {
+            javax.sound.sampled.AudioSystem.write(audio, javax.sound.sampled.AudioFileFormat.Type.WAVE, sample.toFile());
+        }
+        Files.writeString(dir.resolve(id + ".cloned.json"), "{\"name\":\"Saved voice\",\"engine\":\"xtts\",\"language\":\"en\"}");
+        Files.write(dir.resolve("en_US-test-medium.onnx"), new byte[] {1});
+        Files.writeString(dir.resolve("en_US-test-medium.onnx.json"),
+            "{\"audio\":{\"sample_rate\":22050},\"language\":{\"code\":\"en_US\"}}");
+        Preferences node = Preferences.userRoot().node("architect-video-ui-test-" + UUID.randomUUID());
+        AtomicReference<VideoStudioWindow> window = new AtomicReference<>();
+        try {
+            VideoStudioSettings settings = new VideoStudioSettings(node);
+            settings.setVoicesFolder(dir.toString());
+            settings.setVoiceId(id);
+            ProcessRunner never = (command, stdin, timeout) -> { throw new AssertionError("no backend should run"); };
+            VideoStudio studio = new VideoStudio(settings, new ExecutableLocator("", false, name -> null), never);
+            assertEquals(2, studio.discoverVoices().voices().size());
+            SwingUtilities.invokeAndWait(() -> {
+                window.set(new VideoStudioWindow(studio, BuildContext::empty, () -> "No build", dir));
+                window.get().showStudio();
+            });
+            ExecutorService worker = (ExecutorService) field(window.get(), "worker");
+            worker.submit(() -> { }).get(10, TimeUnit.SECONDS);
+            SwingUtilities.invokeAndWait(() -> {
+                JComboBox<?> modes = (JComboBox<?>) field(window.get(), "voiceMode");
+                JComboBox<?> voices = (JComboBox<?>) field(window.get(), "voiceBox");
+                assertEquals(2, modes.getSelectedIndex());
+                assertEquals(id, ((VoicePack) voices.getSelectedItem()).id());
+                assertEquals(id, settings.voiceId(), "refresh must not overwrite the saved selection");
+                modes.setSelectedIndex(0);
+                assertEquals("piper", ((VoicePack) voices.getSelectedItem()).engine());
+                modes.setSelectedIndex(1);
+                assertEquals("piper", ((VoicePack) voices.getSelectedItem()).engine());
+                modes.setSelectedIndex(2);
+                assertEquals(id, ((VoicePack) voices.getSelectedItem()).id());
+            });
+        } finally {
+            if (window.get() != null) {
+                SwingUtilities.invokeAndWait(window.get()::dispose);
+                ((ExecutorService) field(window.get(), "worker")).shutdownNow();
+            }
+            node.removeNode();
+        }
+    }
+
+    private static Object field(VideoStudioWindow window, String name) {
+        try {
+            var field = VideoStudioWindow.class.getDeclaredField(name);
+            field.setAccessible(true);
+            return field.get(window);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError(ex);
+        }
+    }
+
     @Test
     void recordsMilestonesRelativeToTheRecordingStart() {
         AtomicLong now = new AtomicLong(1_000_000);

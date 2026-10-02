@@ -109,7 +109,7 @@ final class VideoStudioWindow extends JFrame {
     private final JTextArea storyArea = new JTextArea(14, 40);
     private final JButton writeButton = new JButton("Write story");
     private final JButton exportButton = new JButton("Export video");
-    private final JButton previewButton = new JButton("Preview voice / Nghe thử voice");
+    private final JButton previewButton = new JButton("Preview voice");
     private final JProgressBar progress = new JProgressBar();
     private final JTextArea logArea = new JTextArea(7, 60);
     private final List<JComponent> busyDisabled = new ArrayList<>();
@@ -284,7 +284,7 @@ final class VideoStudioWindow extends JFrame {
         c.insets = new Insets(0, 0, 4, 0);
         panel.add(voiceBox, c);
         JPanel voiceButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        previewButton.setToolTipText("Speak a short sample with the selected voice.");
+        previewButton.setToolTipText("Preview voice / Nghe thử voice: speak a short sample with the selected voice.");
         previewButton.addActionListener(event -> previewVoice());
         JButton refresh = new JButton("Refresh");
         refresh.setToolTipText("Look for new voice files in the voices folder.");
