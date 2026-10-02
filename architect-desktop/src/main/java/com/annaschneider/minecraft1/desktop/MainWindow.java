@@ -7,6 +7,7 @@ import com.annaschneider.minecraft1.link.LinkException;
 import com.annaschneider.minecraft1.link.LinkMessage;
 import com.annaschneider.minecraft1.link.LinkProtocol;
 import com.annaschneider.minecraft1.link.LinkRequest;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.MessageKind;
 import com.annaschneider.minecraft1.link.PlanSummary;
 import com.annaschneider.minecraft1.link.RecordingStatus;
@@ -109,8 +110,8 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     private final JButton undoButton = new JButton("Undo last build");
     private final JButton startRecordButton = new JButton("Start Recording");
     private final JButton stopRecordButton = new JButton("Stop & Save");
-    private final javax.swing.JCheckBox cinematicCameraBox = new javax.swing.JCheckBox("Cinematic camera", true);
-    private final javax.swing.JCheckBox npcBuildersBox = new javax.swing.JCheckBox("Builder NPCs", true);
+    private final javax.swing.JCheckBox cinematicCameraBox = new javax.swing.JCheckBox("Cinematic camera");
+    private final javax.swing.JCheckBox npcBuildersBox = new javax.swing.JCheckBox("Builder NPCs");
     private final JLabel cameraStatusLabel = new JLabel(" ");
     private final StatusDot recordingDot = new StatusDot();
     private final JLabel recordingStatusLabel = new JLabel("Recording: Not connected");
@@ -132,6 +133,8 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     MainWindow(DesktopSettings settings) {
         super("Minecraft Architect");
         this.settings = settings;
+        cinematicCameraBox.setSelected(settings.cameraNpcSettings().cameraEnabled());
+        npcBuildersBox.setSelected(settings.cameraNpcSettings().npcEnabled());
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setMinimumSize(new Dimension(960, 640));
         setSize(1180, 780);
@@ -485,12 +488,13 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
 
         cinematicCameraBox.setToolTipText("Film the build with the automatic cinematic camera during Build + Record.");
         cinematicCameraBox.addActionListener(event -> {
+            saveQuickSettings();
             if (!cinematicCameraBox.isSelected()) {
                 sendCamera(LinkRequest.camera("stop"));
             }
         });
         npcBuildersBox.setToolTipText("Show villager workers around the sections currently being built.");
-        npcBuildersBox.addActionListener(event -> sendCamera(LinkRequest.npcBuilders(npcBuildersBox.isSelected())));
+        npcBuildersBox.addActionListener(event -> saveQuickSettings());
         recordBar.add(cinematicCameraBox);
         recordBar.add(npcBuildersBox);
         recordBar.add(cameraStatusLabel);
@@ -506,7 +510,19 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     // ------------------------------------------------------------------ actions
 
     private void connect() {
+        connection.setCameraNpcSettings(settings.cameraNpcSettings());
         connection.connect(settings.linkFile(), settings.player());
+    }
+
+    private void saveQuickSettings() {
+        CameraNpcSettings previous = settings.cameraNpcSettings();
+        CameraNpcSettings updated = new CameraNpcSettings(cinematicCameraBox.isSelected(), npcBuildersBox.isSelected(),
+            previous.maxNpcs(), previous.cameraHeight(), previous.rotationSpeed());
+        settings.setCameraNpcSettings(updated);
+        connection.setCameraNpcSettings(updated);
+        if (connection.isConnected()) {
+            sendCamera(LinkRequest.settings(updated));
+        }
         updateControls();
     }
 
@@ -613,8 +629,10 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
 
     /** Sends a camera/NPC request without blocking the UI; failures only show up in the log. */
     private void sendCamera(LinkRequest request) {
-        runBusy("Updating camera settings...", client -> client.call(request),
-            result -> showCameraMessage(result.message()));
+        if (connection.isConnected()) {
+            connection.submit(client -> client.call(request),
+                result -> showCameraMessage(result.message()), this::log);
+        }
     }
 
     private void showCameraMessage(String message) {
@@ -815,6 +833,8 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         SettingsDialog dialog = new SettingsDialog(this, settings);
         dialog.setVisible(true);
         if (dialog.saved()) {
+            cinematicCameraBox.setSelected(settings.cameraNpcSettings().cameraEnabled());
+            npcBuildersBox.setSelected(settings.cameraNpcSettings().npcEnabled());
             autoReconnect = true;
             connection.disconnect();
             connect();

@@ -53,6 +53,10 @@ public final class ArchitectClientMod implements ClientModInitializer {
             String json = buf.readString();
             client.execute(() -> cinematicCamera.onState(client, json));
         });
+        ClientPlayNetworking.registerGlobalReceiver(CameraChannels.CAMERA_SETTINGS_CHANNEL, (client, handler, buf, responseSender) -> {
+            String json = buf.readString();
+            client.execute(() -> cinematicCamera.onSettings(client, json));
+        });
 
         ClientTickEvents.END_CLIENT_TICK.register(cinematicCamera::tick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> cinematicCamera.onDisconnect(client));

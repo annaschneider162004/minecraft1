@@ -17,6 +17,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LinkCodecTest {
     @Test
+    void cameraNpcSettingsClampAndRoundTrip() {
+        assertEquals(new CameraNpcSettings(false, false, 4, 12, 9), CameraNpcSettings.defaults());
+        assertEquals(new CameraNpcSettings(true, true, 12, 5, 30),
+            new CameraNpcSettings(true, true, 99, -10, 100));
+        assertEquals(new CameraNpcSettings(false, false, 0, 80, 1),
+            new CameraNpcSettings(false, false, -2, 200, -5));
+        LinkRequest request = LinkRequest.settings(new CameraNpcSettings(true, false, 3, 20, 8)).withId("settings1");
+        assertEquals(request, RequestValidator.validate(LinkCodec.decodeRequest(LinkCodec.encode(request))));
+        assertThrows(LinkProtocolException.class,
+            () -> RequestValidator.validate(LinkRequest.settings(null).withId("settings2")));
+    }
+
+    @Test
     void requestsUseLowerCaseIdsAndOmitUnusedFields() {
         String json = LinkCodec.encode(LinkRequest.build(BuildMode.TEMPLATE, "house").withId("7"));
         assertEquals("{\"v\":1,\"id\":\"7\",\"type\":\"build\",\"mode\":\"template\",\"template\":\"house\"}", json);

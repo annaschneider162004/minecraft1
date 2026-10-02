@@ -6,6 +6,8 @@ import com.annaschneider.minecraft1.largebuild.camera.CameraUpdate;
 import com.annaschneider.minecraft1.largebuild.engine.BuildQueue;
 import com.annaschneider.minecraft1.largebuild.engine.JobProgress;
 import com.annaschneider.minecraft1.mod.runtime.ArchitectConfig;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
+import com.annaschneider.minecraft1.link.LinkCodec;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.network.PacketByteBuf;
@@ -32,6 +34,7 @@ public final class ServerCameraCoordinator {
     private final MinecraftServer server;
     private final BuildCameraDirector director;
     private final Map<UUID, CameraMode> modes = new ConcurrentHashMap<>();
+    private final Map<UUID, CameraNpcSettings> settings = new ConcurrentHashMap<>();
     private int ticks;
 
     public ServerCameraCoordinator(MinecraftServer server, BuildCameraDirector director) {
@@ -50,6 +53,12 @@ public final class ServerCameraCoordinator {
         return ArchitectConfig.CAMERA_ENABLED;
     }
 
+    public CameraNpcSettings settings(UUID playerId) {
+        return playerId == null ? CameraNpcSettings.defaults()
+            : settings.getOrDefault(playerId, new CameraNpcSettings(true, ArchitectConfig.NPC_ENABLED,
+                ArchitectConfig.NPC_MAX_WORKERS, ArchitectConfig.CAMERA_ORBIT_HEIGHT, ArchitectConfig.CAMERA_ORBIT_SPEED));
+    }
+
     /**
      * Switches a player's camera mode and tells their client about it.
      *
@@ -60,8 +69,9 @@ public final class ServerCameraCoordinator {
         if (playerId == null) {
             return "No player to film.";
         }
-        if (!ArchitectConfig.CAMERA_ENABLED && mode.isActive()) {
-            return "The cinematic camera is disabled on this server (-Darchitect.camera=false).";
+        if ((!ArchitectConfig.CAMERA_ENABLED || (settings.containsKey(playerId) && !settings.get(playerId).cameraEnabled()))
+            && mode.isActive()) {
+            return "The cinematic camera is disabled in settings or on this server.";
         }
         modes.put(playerId, mode);
         boolean delivered = send(playerId, CameraChannels.CAMERA_MODE_CHANNEL, CameraPacket.ofMode(mode));
@@ -78,6 +88,26 @@ public final class ServerCameraCoordinator {
         return mode.isActive()
             ? "Cinematic camera: " + mode.id() + "."
             : "Cinematic camera stopped; your normal view is restored.";
+    }
+
+    public void applySettings(UUID playerId, CameraNpcSettings value) {
+        if (playerId == null) {
+            return;
+        }
+        settings.put(playerId, value);
+        ServerPlayerEntity player = player(playerId);
+        if (player != null) {
+            try {
+                PacketByteBuf buf = PacketByteBufs.create();
+                buf.writeString(LinkCodec.encode(value));
+                ServerPlayNetworking.send(player, CameraChannels.CAMERA_SETTINGS_CHANNEL, buf);
+            } catch (RuntimeException ex) {
+                LOGGER.warning("[Architect] Could not send camera settings: " + ex);
+            }
+        }
+        if (!value.cameraEnabled() && mode(playerId).isActive()) {
+            setMode(playerId, CameraMode.OFF);
+        }
     }
 
     /** Pushes coalesced camera updates to every player that enabled the camera. */
@@ -103,6 +133,7 @@ public final class ServerCameraCoordinator {
     public void forget(UUID playerId) {
         if (playerId != null) {
             modes.remove(playerId);
+            settings.remove(playerId);
             director.forget(playerId);
         }
     }
@@ -112,6 +143,7 @@ public final class ServerCameraCoordinator {
             send(playerId, CameraChannels.CAMERA_MODE_CHANNEL, CameraPacket.ofMode(CameraMode.OFF));
         }
         modes.clear();
+        settings.clear();
         director.forgetAll();
     }
 

@@ -10,6 +10,7 @@ import com.annaschneider.minecraft1.largebuild.scene.ScenePlan;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePreview;
 import com.annaschneider.minecraft1.largebuild.scene.SceneRegion;
 import com.annaschneider.minecraft1.link.BuildMode;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.JobStatus;
 import com.annaschneider.minecraft1.link.LinkConnection;
 import com.annaschneider.minecraft1.link.LinkInfo;
@@ -43,6 +44,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Connects the Windows desktop app to the {@link ArchitectCommandEngine}. Platform-neutral: the Fabric adapter creates
@@ -64,6 +66,8 @@ public final class DesktopBridge implements AutoCloseable {
     private final List<String> templates;
     private final ServerRecordingCoordinator recordingCoordinator;
     private final Map<Long, JobStatus> lastSent = new HashMap<>();
+    private final Map<Long, CameraNpcSettings> desiredSettings = new HashMap<>();
+    private final Map<Long, UUID> appliedSettings = new HashMap<>();
     private LinkServer server;
     private Path linkFile;
     private long ticks;
@@ -129,6 +133,21 @@ public final class DesktopBridge implements AutoCloseable {
             return;
         }
         server.drain(this::handle, MAX_REQUESTS_PER_TICK);
+        for (LinkConnection connection : server.connections()) {
+            CameraNpcSettings desired = desiredSettings.get(connection.id());
+            if (desired != null) {
+                var player = players.find(connection.player());
+                if (player.isEmpty()) {
+                    appliedSettings.remove(connection.id());
+                } else if (!player.get().id().equals(appliedSettings.get(connection.id()))) {
+                    engine.applyCameraNpcSettings(player.get().id(), desired);
+                    appliedSettings.put(connection.id(), player.get().id());
+                }
+            }
+        }
+        List<Long> connected = server.connections().stream().map(LinkConnection::id).toList();
+        desiredSettings.keySet().retainAll(connected);
+        appliedSettings.keySet().retainAll(connected);
         if (++ticks % PROGRESS_INTERVAL_TICKS == 0) {
             pushProgress();
         }
@@ -149,6 +168,8 @@ public final class DesktopBridge implements AutoCloseable {
             linkFile = null;
         }
         lastSent.clear();
+        desiredSettings.clear();
+        appliedSettings.clear();
     }
 
     LinkMessage handle(LinkConnection connection, LinkRequest request) {
@@ -170,7 +191,27 @@ public final class DesktopBridge implements AutoCloseable {
             case RECORD_STOP -> recordStop(connection);
             case RECORD_STATUS -> recordStatus(connection);
             case CAMERA -> camera(connection, request);
+            case SETTINGS -> settings(connection, request);
         };
+    }
+
+    private LinkMessage settings(LinkConnection connection, LinkRequest request) {
+        CameraNpcSettings raw = request.settings();
+        CameraNpcSettings bounded = new CameraNpcSettings(raw.cameraEnabled(), raw.npcEnabled(), raw.maxNpcs(),
+            raw.cameraHeight(), raw.rotationSpeed());
+        desiredSettings.put(connection.id(), bounded);
+        var player = players.find(connection.player());
+        if (player.isEmpty()) {
+            appliedSettings.remove(connection.id());
+            return LinkMessage.ok(null, "No world/player yet; settings remain saved in the desktop app.");
+        }
+        appliedSettings.put(connection.id(), player.get().id());
+        return LinkMessage.ok(null, engine.applyCameraNpcSettings(player.get().id(), bounded));
+    }
+
+    /** Called when Minecraft replaces a player connection before the next desktop request. */
+    public void reapplySettings(UUID playerId) {
+        appliedSettings.values().removeIf(playerId::equals);
     }
 
     /** Camera mode and/or NPC toggle; both are plain {@code /architect} commands run for the connected player. */

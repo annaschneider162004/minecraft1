@@ -48,6 +48,8 @@ public final class BuildCrewCoordinator implements NpcBuildCoordinator {
 
     private final WorkerFactory factory;
     private final Map<Long, Crew> crews = new LinkedHashMap<>();
+    private final Map<Long, Bounds> activeAreas = new LinkedHashMap<>();
+    private final Map<UUID, NpcSettings> ownerSettings = new LinkedHashMap<>();
     private NpcSettings settings;
 
     public BuildCrewCoordinator(WorkerFactory factory) {
@@ -68,6 +70,31 @@ public final class BuildCrewCoordinator implements NpcBuildCoordinator {
         this.settings = Objects.requireNonNull(value, "settings");
         if (!value.enabled()) {
             shutdown();
+        }
+    }
+
+    /** A desktop preference affects only builds owned by that player. */
+    public void setOwnerSettings(UUID owner, NpcSettings value) {
+        if (owner == null) {
+            return;
+        }
+        ownerSettings.put(owner, Objects.requireNonNull(value, "settings"));
+        if (!value.enabled()) {
+            for (Crew crew : List.copyOf(crews.values())) {
+                if (owner.equals(crew.owner)) {
+                    remove(crew.jobId);
+                }
+            }
+        }
+    }
+
+    public NpcSettings settings(UUID owner) {
+        return ownerSettings.getOrDefault(owner, settings);
+    }
+
+    public void forgetOwner(UUID owner) {
+        if (owner != null) {
+            ownerSettings.remove(owner);
         }
     }
 
@@ -132,13 +159,17 @@ public final class BuildCrewCoordinator implements NpcBuildCoordinator {
 
     @Override
     public void onJobStarted(JobProgress job, Bounds worldBounds) {
-        if (!settings.enabled() || job.kind() != JobKind.BUILD || worldBounds == null || crews.containsKey(job.jobId())) {
+        if (job.kind() == JobKind.BUILD && worldBounds != null) {
+            activeAreas.put(job.jobId(), worldBounds);
+        }
+        NpcSettings config = settings(job.owner());
+        if (!config.enabled() || job.kind() != JobKind.BUILD || worldBounds == null || crews.containsKey(job.jobId())) {
             return;
         }
         Crew crew = new Crew(job.jobId());
         crew.owner = job.owner();
         crew.area = worldBounds;
-        int workers = settings.workersFor(job.unitsTotal());
+        int workers = config.workersFor(job.unitsTotal());
         Vec3i spawn = center(worldBounds);
         for (int i = 0; i < workers; i++) {
             AgentRole role = ROLE_CYCLE[i % ROLE_CYCLE.length];
@@ -169,6 +200,7 @@ public final class BuildCrewCoordinator implements NpcBuildCoordinator {
     @Override
     public void onJobFinished(JobProgress job) {
         remove(job.jobId());
+        activeAreas.remove(job.jobId());
     }
 
     /**
@@ -183,8 +215,37 @@ public final class BuildCrewCoordinator implements NpcBuildCoordinator {
             }
             alive.add(job.jobId());
             Crew crew = crews.get(job.jobId());
+            NpcSettings config = settings(job.owner());
+            if (crew == null && config.enabled() && activeAreas.containsKey(job.jobId())) {
+                onJobStarted(job, activeAreas.get(job.jobId()));
+            }
+            crew = crews.get(job.jobId());
             if (crew != null) {
                 crew.paused = job.state() == JobState.PAUSED;
+                if (!config.enabled()) {
+                    remove(job.jobId());
+                } else {
+                    int wanted = config.workersFor(job.unitsTotal());
+                    boolean changed = false;
+                    while (crew.agents.size() > wanted) {
+                        factory.dispose(crew.agents.remove(crew.agents.size() - 1));
+                        changed = true;
+                    }
+                    while (crew.agents.size() < wanted) {
+                        int index = crew.agents.size();
+                        Optional<BuildAgent> added = factory.create(job.jobId(), job.owner(), index,
+                            ROLE_CYCLE[index % ROLE_CYCLE.length], center(crew.area));
+                        if (added.isEmpty()) {
+                            break;
+                        }
+                        crew.agents.add(added.get());
+                        changed = true;
+                    }
+                    if (changed) {
+                        distribute(job, ChunkPartitioner.sectionsIntersecting(crew.area, MAX_PARTITIONED_SECTIONS));
+                        reposition(crew, crew.frontier == null ? crew.area : crew.frontier);
+                    }
+                }
             }
         }
         for (Long jobId : List.copyOf(crews.keySet())) {
@@ -192,6 +253,7 @@ public final class BuildCrewCoordinator implements NpcBuildCoordinator {
                 remove(jobId);
             }
         }
+        activeAreas.keySet().retainAll(alive);
     }
 
     /** Removes every worker of every job (server stop, world unload, NPCs disabled). */

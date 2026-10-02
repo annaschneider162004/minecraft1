@@ -3,6 +3,8 @@ package com.annaschneider.minecraft1.mod.link;
 import com.annaschneider.minecraft1.domain.Vec3i;
 import com.annaschneider.minecraft1.largebuild.engine.BuildSettings;
 import com.annaschneider.minecraft1.link.BuildMode;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
+import com.annaschneider.minecraft1.largebuild.camera.CameraMode;
 import com.annaschneider.minecraft1.link.LinkClient;
 import com.annaschneider.minecraft1.link.LinkException;
 import com.annaschneider.minecraft1.link.LinkInfo;
@@ -32,6 +34,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -98,6 +102,47 @@ class DesktopBridgeTest {
 
     private LinkClient connect(String player) throws LinkException {
         return LinkClient.connect(info, "test-desktop", player, listener, TIMEOUT);
+    }
+
+    @Test
+    void appliesSettingsOnConnectionAndWhenPlayerJoinsLater() throws Exception {
+        AtomicReference<CameraNpcSettings> camera = new AtomicReference<>();
+        AtomicReference<CameraNpcSettings> crew = new AtomicReference<>();
+        AtomicInteger deliveries = new AtomicInteger();
+        engine.setCameraControl(new ArchitectCommandEngine.CameraControl() {
+            public String setMode(UUID id, CameraMode mode) { return "off"; }
+            public String describe(UUID id) { return "off"; }
+            public void applySettings(UUID id, CameraNpcSettings value) { camera.set(value); deliveries.incrementAndGet(); }
+        });
+        engine.setCrewControl(new ArchitectCommandEngine.CrewControl() {
+            public String setEnabled(boolean enabled) { return "ok"; }
+            public String describe() { return "ok"; }
+            public void applySettings(UUID id, CameraNpcSettings value) { crew.set(value); }
+        });
+        CameraNpcSettings desired = new CameraNpcSettings(true, true, 6, 24, 10);
+        try (LinkClient client = connect("Steve")) {
+            assertTrue(client.call(LinkRequest.settings(desired)).isOk());
+            assertEquals(desired, camera.get());
+            assertEquals(desired, crew.get());
+            playerOnline.set(false);
+            Thread.sleep(30);
+            playerOnline.set(true);
+            for (int i = 0; i < 100 && deliveries.get() < 2; i++) {
+                Thread.sleep(10);
+            }
+            assertEquals(2, deliveries.get(), "settings reapply after a player reconnects");
+        }
+        camera.set(null);
+        playerOnline.set(false);
+        try (LinkClient client = connect("Steve")) {
+            assertTrue(client.call(LinkRequest.settings(desired)).isOk());
+            assertNull(camera.get());
+            playerOnline.set(true);
+            for (int i = 0; i < 100 && camera.get() == null; i++) {
+                Thread.sleep(10);
+            }
+            assertEquals(desired, camera.get());
+        }
     }
 
     @Test

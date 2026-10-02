@@ -2,9 +2,12 @@ package com.annaschneider.minecraft1.mod.client.camera;
 
 import com.annaschneider.minecraft1.largebuild.camera.CameraKeyframe;
 import com.annaschneider.minecraft1.largebuild.camera.CameraMode;
+import com.annaschneider.minecraft1.largebuild.camera.CameraSettings;
 import com.annaschneider.minecraft1.largebuild.camera.CinematicCameraController;
 import com.annaschneider.minecraft1.mod.camera.CameraPacket;
 import com.annaschneider.minecraft1.mod.runtime.ArchitectConfig;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
+import com.annaschneider.minecraft1.link.LinkCodec;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -30,6 +33,7 @@ public final class ClientCinematicCamera {
     private static final double MAX_DELTA_SECONDS = 0.25;
 
     private final CinematicCameraController controller;
+    private final CameraSettings defaultSettings;
     private ArmorStandEntity view;
     private Perspective savedPerspective;
     private boolean savedHudHidden;
@@ -42,6 +46,7 @@ public final class ClientCinematicCamera {
 
     public ClientCinematicCamera(CinematicCameraController controller) {
         this.controller = controller;
+        this.defaultSettings = controller.settings();
     }
 
     public CinematicCameraController controller() {
@@ -54,6 +59,18 @@ public final class ClientCinematicCamera {
 
     public String describe() {
         return controller.describe();
+    }
+
+    public void onSettings(MinecraftClient client, String json) {
+        CameraNpcSettings raw = LinkCodec.decode(json, CameraNpcSettings.class);
+        CameraNpcSettings value = new CameraNpcSettings(raw.cameraEnabled(), raw.npcEnabled(), raw.maxNpcs(),
+            raw.cameraHeight(), raw.rotationSpeed());
+        CameraSettings old = controller.settings();
+        controller.setSettings(new CameraSettings(old.orbitDistance(), value.cameraHeight(), value.rotationSpeed(),
+            old.autoShotSeconds(), old.maxMoveSpeed(), old.maxDistance()));
+        if (!value.cameraEnabled()) {
+            stop(client);
+        }
     }
 
     /** Server told this client which mode to use. */
@@ -89,6 +106,7 @@ public final class ClientCinematicCamera {
     /** The player left the world: forget the job but keep the chosen mode for the next one. */
     public void onDisconnect(MinecraftClient client) {
         controller.clearJob();
+        controller.setSettings(defaultSettings);
         restore(client);
     }
 

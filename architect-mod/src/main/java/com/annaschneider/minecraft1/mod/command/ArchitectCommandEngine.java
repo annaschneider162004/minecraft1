@@ -33,6 +33,7 @@ import com.annaschneider.minecraft1.largebuild.scene.ScenePlan;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePreview;
 import com.annaschneider.minecraft1.largebuild.scene.SceneRegion;
 import com.annaschneider.minecraft1.mod.runtime.ArchitectConfig;
+import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.mod.runtime.BlockCatalog;
 import com.annaschneider.minecraft1.mod.runtime.BlockWorld;
 import com.annaschneider.minecraft1.mod.runtime.BlockWorldAccess;
@@ -65,6 +66,8 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         String setMode(UUID playerId, CameraMode mode);
 
         String describe(UUID playerId);
+
+        void applySettings(UUID playerId, CameraNpcSettings settings);
     }
 
     /** Visible builder NPCs; supplied by the Fabric adapter, absent in headless tests. */
@@ -72,6 +75,16 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         String setEnabled(boolean enabled);
 
         String describe();
+
+        default String setEnabled(UUID playerId, boolean enabled) {
+            return setEnabled(enabled);
+        }
+
+        default String describe(UUID playerId) {
+            return describe();
+        }
+
+        void applySettings(UUID playerId, CameraNpcSettings settings);
     }
 
     public static final Vec3i DEFAULT_ORIGIN = new Vec3i(0, 1, 0);
@@ -148,6 +161,24 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         this.crewControl = control;
     }
 
+    /** Apply desktop preferences on the server thread; headless/demo runtimes can report unavailable features. */
+    public String applyCameraNpcSettings(UUID playerId, CameraNpcSettings settings) {
+        if (playerId == null) {
+            return "No player is in a world; settings remain saved in the desktop app.";
+        }
+        CameraNpcSettings bounded = new CameraNpcSettings(settings.cameraEnabled(), settings.npcEnabled(),
+            settings.maxNpcs(), settings.cameraHeight(), settings.rotationSpeed());
+        if (cameraControl != null) {
+            cameraControl.applySettings(playerId, bounded);
+        }
+        if (crewControl != null) {
+            crewControl.applySettings(playerId, bounded);
+        }
+        return cameraControl == null && crewControl == null
+            ? "Camera and NPC features are unavailable in this runtime; settings remain saved."
+            : "Camera and NPC settings applied.";
+    }
+
     /** Loads a saved scene plan (throws {@link IllegalArgumentException} with a user-facing message if missing). */
     public ScenePlan loadPlan(String planId) {
         return plans.load(planId);
@@ -190,7 +221,7 @@ public final class ArchitectCommandEngine implements AutoCloseable {
                 case "cancel" -> handleCancel(playerId, world);
                 case "undo" -> handleUndo(playerId);
                 case "camera" -> handleCamera(playerId, args);
-                case "npc" -> handleNpc(args);
+                case "npc" -> handleNpc(playerId, args);
                 default -> new CommandResult(false, "Unknown subcommand. Use /architect help.");
             };
         } catch (IllegalArgumentException | IllegalStateException | UncheckedIOException ex) {
@@ -461,15 +492,15 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         };
     }
 
-    private CommandResult handleNpc(String[] args) {
+    private CommandResult handleNpc(UUID playerId, String[] args) {
         requireLength(args, 3, "Usage: /architect npc <on|off|status>");
         if (crewControl == null) {
             return new CommandResult(false, "Builder NPCs are not available on this server.");
         }
         return switch (args[2].toLowerCase(Locale.ROOT)) {
-            case "on", "enable", "true" -> new CommandResult(true, crewControl.setEnabled(true));
-            case "off", "disable", "false" -> new CommandResult(true, crewControl.setEnabled(false));
-            case "status" -> new CommandResult(true, crewControl.describe());
+            case "on", "enable", "true" -> new CommandResult(true, crewControl.setEnabled(playerId, true));
+            case "off", "disable", "false" -> new CommandResult(true, crewControl.setEnabled(playerId, false));
+            case "status" -> new CommandResult(true, crewControl.describe(playerId));
             default -> new CommandResult(false, "Usage: /architect npc <on|off|status>");
         };
     }

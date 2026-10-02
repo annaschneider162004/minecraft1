@@ -27,7 +27,7 @@ public final class CinematicCameraController {
     private static final double MAX_LIFT = 48;
     private static final double LIFT_STEP = 2;
 
-    private final CameraSettings settings;
+    private CameraSettings settings;
     private Clearance clearance = (x, y, z) -> true;
 
     private CameraMode mode = CameraMode.OFF;
@@ -57,6 +57,10 @@ public final class CinematicCameraController {
 
     public CameraSettings settings() {
         return settings;
+    }
+
+    public void setSettings(CameraSettings settings) {
+        this.settings = Objects.requireNonNull(settings, "settings");
     }
 
     public void setClearance(Clearance clearance) {
