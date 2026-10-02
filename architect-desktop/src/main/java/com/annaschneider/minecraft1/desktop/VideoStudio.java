@@ -16,7 +16,11 @@ import com.annaschneider.minecraft1.video.voice.Narrator;
 import com.annaschneider.minecraft1.video.voice.PiperTtsEngine;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
 import com.annaschneider.minecraft1.video.voice.VoicePackRegistry;
+import com.annaschneider.minecraft1.video.voice.ClonedVoiceProfiles;
+import com.annaschneider.minecraft1.video.voice.VoicePack;
+import com.annaschneider.minecraft1.video.voice.XttsTtsEngine;
 
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,11 +62,34 @@ final class VideoStudio {
     }
 
     Narrator narrator() {
-        return new Narrator(List.of(new PiperTtsEngine(piper().orElse(null), runner)));
+        return new Narrator(List.of(new PiperTtsEngine(piper().orElse(null), runner), cloningEngine()));
+    }
+
+    XttsTtsEngine cloningEngine() {
+        Path executable = locator.find(settings.cloningPath(), XttsTtsEngine.ENV_VARIABLE, "tts", List.of()).orElse(null);
+        Path model = null;
+        try {
+            if (!settings.cloningModelFolder().isBlank()) {
+                model = Path.of(settings.cloningModelFolder());
+            }
+        } catch (InvalidPathException ignored) {
+            // An invalid saved path is reported as an unavailable engine.
+        }
+        return new XttsTtsEngine(executable, model, runner);
+    }
+
+    ClonedVoiceProfiles clonedVoices() {
+        return new ClonedVoiceProfiles(cloningEngine());
     }
 
     VoiceDiscovery discoverVoices() {
-        return new VoicePackRegistry(narrator().supportedEngines()).discover(settings.voicesFolder());
+        VoiceDiscovery packs = new VoicePackRegistry(java.util.Set.of(PiperTtsEngine.ID)).discover(settings.voicesFolder());
+        VoiceDiscovery clones = clonedVoices().discover(settings.voicesFolder());
+        List<VoicePack> voices = new ArrayList<>(packs.voices());
+        voices.addAll(clones.voices());
+        List<String> problems = new ArrayList<>(packs.problems());
+        problems.addAll(clones.problems());
+        return new VoiceDiscovery(settings.voicesFolder(), voices, problems);
     }
 
     /** @throws IllegalArgumentException when local AI is enabled with a non-local address */
@@ -93,6 +120,7 @@ final class VideoStudio {
         List<String> lines = new ArrayList<>();
         lines.add(ffmpeg().map(tool -> "FFmpeg: " + tool.executable()).orElse("FFmpeg: NOT FOUND - " + FfmpegTool.MISSING_MESSAGE));
         lines.add(piper().map(path -> "Piper voice engine: " + path).orElse("Piper voice engine: NOT FOUND - " + PiperTtsEngine.MISSING_MESSAGE));
+        lines.add(cloningEngine().unavailableReason().orElse("Voice cloning: local XTTS v2 (English)"));
         FootageRecorder recorder = recorder();
         lines.add(recorder.unavailableReason().map(reason -> "Screen recording: NOT AVAILABLE - " + reason)
             .orElse("Screen recording: " + recorder.name()));

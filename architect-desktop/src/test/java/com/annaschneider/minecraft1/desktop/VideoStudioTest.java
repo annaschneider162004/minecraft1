@@ -68,6 +68,8 @@ class VideoStudioTest {
         try {
             VideoStudioSettings settings = new VideoStudioSettings(node);
             assertEquals("", settings.ffmpegPath());
+            assertEquals("", settings.cloningPath());
+            assertEquals("", settings.cloningModelFolder());
             assertFalse(settings.useLocalAi());
             assertEquals("http://127.0.0.1:11434", settings.ollamaUrl());
             assertEquals(VideoStudioSettings.defaultOutputFolder(), settings.outputFolder());
@@ -78,6 +80,8 @@ class VideoStudioTest {
             settings.setFfmpegPath("  C:/ffmpeg/bin/ffmpeg.exe ");
             settings.setVoicesFolder("/data/voices");
             settings.setVoiceId("vi_VN-vais1000-medium");
+            settings.setCloningPath(" /data/tools/tts ");
+            settings.setCloningModelFolder("/data/models/xtts-v2");
             settings.setUseLocalAi(true);
             settings.setOutputFolder("");
             node.flush();
@@ -85,6 +89,8 @@ class VideoStudioTest {
             assertEquals("C:/ffmpeg/bin/ffmpeg.exe", reopened.ffmpegPath());
             assertEquals(Path.of("/data/voices"), reopened.voicesFolder());
             assertEquals("vi_VN-vais1000-medium", reopened.voiceId());
+            assertEquals("/data/tools/tts", reopened.cloningPath());
+            assertEquals("/data/models/xtts-v2", reopened.cloningModelFolder());
             assertTrue(reopened.useLocalAi());
             assertEquals(VideoStudioSettings.defaultOutputFolder(), reopened.outputFolder());
             assertEquals(ExportMode.NARRATE_ONLY, reopened.exportMode());
@@ -115,6 +121,7 @@ class VideoStudioTest {
             String report = String.join("\n", studio.diagnostics(found));
             assertTrue(report.contains("FFmpeg: NOT FOUND"), report);
             assertTrue(report.contains("Piper voice engine: NOT FOUND"), report);
+            assertTrue(report.contains("Voice cloning unavailable"), report);
             assertTrue(report.contains("lonely.onnx: missing config file"), report);
             assertTrue(report.contains("built-in templates"), report);
             assertTrue(report.contains("Screen recording: NOT AVAILABLE"), report);
@@ -134,6 +141,7 @@ class VideoStudioTest {
             assertTrue(VideoStudioWindow.helpHtml().contains(mode.label()), mode.label());
         }
         assertTrue(VideoStudioWindow.helpHtml().contains("Waiting for remaining job..."));
+        assertTrue(VideoStudioWindow.helpHtml().contains("Clone voice from sample..."));
     }
 
     private static JobStatus job(long id, String state, double percent, long blocks) {

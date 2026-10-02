@@ -678,6 +678,28 @@ A pack is rejected (and listed with the reason in the log / **Tools...**) when t
 or larger than 2 GB, the JSON is invalid or over 1 MB, the engine is not `piper`, the language or sample rate is invalid,
 the id is already used or the files point outside the voices folder.
 
+**Clone voice from sample... / Clone voice từ sample...** – optional local XTTS v2 voice cloning:
+
+1. Install a compatible Coqui `tts` CLI separately and obtain an XTTS v2 model under its license. In **Tools...**, choose
+   the executable (or use PATH / `ARCHITECT_XTTS`) and the local model folder containing `model.pth`, `config.json`, and
+   `vocab.json`. No model is downloaded by Video Studio; only use trusted models/configs.
+2. Click **Clone voice from sample...**, then **Upload sample audio / Tải file audio mẫu**. Use audio you own or have
+   permission to clone: a clear 6–60 second **16-bit PCM WAV**, mono or stereo, 8–96 kHz, at most 20 MB. Other formats,
+   unreadable/truncated files, and out-of-range duration/size are rejected. Microphone recording is not available in this
+   UI, so **Record sample / Ghi âm mẫu** is disabled with an upload hint.
+3. Name the voice. **Checking sample...** → **Creating voice profile...** → **Voice profile ready** means a test
+   synthesis succeeded. The voices folder stores `clone-<uuid>.cloned.json` and its own `clone-<uuid>.sample.wav` copy;
+   the original upload can be removed. Delete both stored files to remove the profile, then **Refresh**.
+4. Select **Clone from sample audio**, choose the profile, and **Preview voice / Nghe thử voice**. Preview, **Narrate
+   only**, **Export video**, and **Auto-export** use the same sample-conditioned engine. Profiles are rediscovered after
+   restarting the app. **Built-in voice** and **Custom voice pack** modes both show the existing installed Piper packs.
+
+This backend currently generates **English** narration only (XTTS v2 does not support Vietnamese). All synthesis runs
+locally on CPU; it may take several minutes. Missing tools/models show **Voice cloning unavailable**; failed creation
+shows **Voice profile creation failed:** and does not publish a profile. Existing packs remain usable, and **Export
+video** retains its silent-video fallback if narration fails (automatic narration modes instead report the failure).
+No audio is uploaded, and no Python/model dependencies are bundled with the app.
+
 **Troubleshooting**
 
 - *"FFmpeg was not found"* – install FFmpeg (`winget install ffmpeg`), restart the app or pick `ffmpeg.exe` in **Tools...**.

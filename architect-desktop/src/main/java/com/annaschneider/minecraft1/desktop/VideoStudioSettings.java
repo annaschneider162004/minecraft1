@@ -43,6 +43,22 @@ final class VideoStudioSettings {
         putOrRemove("piperPath", value);
     }
 
+    String cloningPath() {
+        return preferences.get("cloningPath", "");
+    }
+
+    void setCloningPath(String value) {
+        putOrRemove("cloningPath", value);
+    }
+
+    String cloningModelFolder() {
+        return preferences.get("cloningModelFolder", "");
+    }
+
+    void setCloningModelFolder(String value) {
+        putOrRemove("cloningModelFolder", value);
+    }
+
     Path voicesFolder() {
         return pathOr("voicesFolder", VoiceFolders.defaultVoicesFolder());
     }

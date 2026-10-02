@@ -19,6 +19,8 @@ import com.annaschneider.minecraft1.video.voice.NarrationClip;
 import com.annaschneider.minecraft1.video.voice.NarrationException;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
 import com.annaschneider.minecraft1.video.voice.VoicePack;
+import com.annaschneider.minecraft1.video.voice.ClonedVoiceProfiles;
+import com.annaschneider.minecraft1.video.voice.XttsTtsEngine;
 
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
@@ -100,11 +102,14 @@ final class VideoStudioWindow extends JFrame {
     private final JList<Path> footageList = new JList<>(footageModel);
     private final JLabel timelineLabel = new JLabel(" ");
     private final JComboBox<Object> voiceBox = new JComboBox<>();
+    private final JComboBox<String> voiceMode = new JComboBox<>(new String[] {
+        "Built-in voice", "Custom voice pack", "Clone from sample audio"
+    });
     private final JLabel voiceInfo = new JLabel(" ");
     private final JTextArea storyArea = new JTextArea(14, 40);
     private final JButton writeButton = new JButton("Write story");
     private final JButton exportButton = new JButton("Export video");
-    private final JButton previewButton = new JButton("Preview voice");
+    private final JButton previewButton = new JButton("Preview voice / Nghe thử voice");
     private final JProgressBar progress = new JProgressBar();
     private final JTextArea logArea = new JTextArea(7, 60);
     private final List<JComponent> busyDisabled = new ArrayList<>();
@@ -273,6 +278,8 @@ final class VideoStudioWindow extends JFrame {
             voiceInfo.setText(voice == null ? "The video is exported without narration." : voice.id()
                 + (voice.description().isBlank() ? "" : " - " + voice.description()));
         });
+        voiceMode.setToolTipText("Built-in/custom modes use installed Piper packs; clone mode uses local sample profiles.");
+        voiceMode.addActionListener(event -> updateVoiceList(studio.settings().voiceId()));
         c.gridy = 8;
         c.insets = new Insets(0, 0, 4, 0);
         panel.add(voiceBox, c);
@@ -288,9 +295,23 @@ final class VideoStudioWindow extends JFrame {
         voiceButtons.add(previewButton);
         voiceButtons.add(refresh);
         voiceButtons.add(openVoices);
-        busyDisabled.addAll(List.of(refresh));
+        JPanel cloningButtons = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
+        JButton clone = new JButton("Clone voice from sample... / Clone voice từ sample...");
+        clone.addActionListener(event -> cloneVoice());
+        JButton recordSample = new JButton("Record sample / Ghi âm mẫu");
+        recordSample.setEnabled(false);
+        recordSample.setToolTipText("Microphone recording is not available in this UI. Upload a WAV sample instead.");
+        cloningButtons.add(voiceMode);
+        cloningButtons.add(clone);
+        JPanel voiceControls = new JPanel(new BorderLayout(0, 4));
+        JPanel cloneControls = new JPanel(new BorderLayout(0, 4));
+        cloneControls.add(cloningButtons, BorderLayout.NORTH);
+        cloneControls.add(recordSample, BorderLayout.SOUTH);
+        voiceControls.add(voiceButtons, BorderLayout.NORTH);
+        voiceControls.add(cloneControls, BorderLayout.SOUTH);
+        busyDisabled.addAll(List.of(refresh, voiceBox, voiceMode, clone));
         c.gridy = 9;
-        panel.add(voiceButtons, c);
+        panel.add(voiceControls, c);
         voiceInfo.setForeground(Color.GRAY);
         c.gridy = 10;
         panel.add(voiceInfo, c);
@@ -384,17 +405,72 @@ final class VideoStudioWindow extends JFrame {
             List<String> diagnostics = studio.diagnostics(found);
             SwingUtilities.invokeLater(() -> {
                 voices = found;
-                DefaultComboBoxModel<Object> model = new DefaultComboBoxModel<>();
-                model.addElement(NO_VOICE);
-                found.voices().forEach(model::addElement);
-                voiceBox.setModel(model);
-                found.find(studio.settings().voiceId()).ifPresentOrElse(voiceBox::setSelectedItem, () -> voiceBox.setSelectedIndex(
-                    found.voices().isEmpty() ? 0 : 1));
+                String savedId = studio.settings().voiceId();
+                if (found.find(savedId).map(v -> XttsTtsEngine.ID.equals(v.engine())).orElse(false)) {
+                    voiceMode.setSelectedIndex(2);
+                }
+                updateVoiceList(savedId);
                 diagnostics.forEach(this::log);
                 if (found.voices().isEmpty()) {
                     log("No voices yet: copy a Piper voice (.onnx + .onnx.json) into " + found.folder() + " and click Refresh.");
                 }
             });
+        });
+    }
+
+    private void updateVoiceList(String selectedId) {
+        if (voices == null) {
+            return;
+        }
+        boolean cloned = voiceMode.getSelectedIndex() == 2;
+        DefaultComboBoxModel<Object> model = new DefaultComboBoxModel<>();
+        model.addElement(NO_VOICE);
+        voices.voices().stream().filter(v -> cloned == XttsTtsEngine.ID.equals(v.engine())).forEach(model::addElement);
+        voiceBox.setModel(model);
+        VoicePack selected = voices.find(selectedId).filter(v -> cloned == XttsTtsEngine.ID.equals(v.engine())).orElse(null);
+        voiceBox.setSelectedItem(selected != null ? selected : model.getElementAt(model.getSize() > 1 ? 1 : 0));
+    }
+
+    private void cloneVoice() {
+        var unavailable = studio.cloningEngine().unavailableReason();
+        if (unavailable.isPresent()) {
+            error(unavailable.get());
+            return;
+        }
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Upload sample audio / Tải file audio mẫu");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("PCM WAV sample (6–60 seconds, max 20 MB)", "wav"));
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        String name = JOptionPane.showInputDialog(this,
+            "Voice profile name (English narration). Use only audio you have permission to clone.",
+            "Clone voice from sample... / Clone voice từ sample...", JOptionPane.PLAIN_MESSAGE);
+        if (name == null) {
+            return;
+        }
+        Path sample = chooser.getSelectedFile().toPath();
+        runInBackground(ClonedVoiceProfiles.CHECKING, () -> {
+            try {
+                VoicePack profile = studio.clonedVoices().create(studio.settings().voicesFolder(), sample, name,
+                    message -> SwingUtilities.invokeLater(() -> {
+                        voiceInfo.setText(message);
+                        log(message);
+                    }));
+                VoiceDiscovery found = studio.discoverVoices();
+                SwingUtilities.invokeLater(() -> {
+                    voices = found;
+                    voiceMode.setSelectedIndex(2);
+                    updateVoiceList(profile.id());
+                    studio.settings().setVoiceId(profile.id());
+                    voiceInfo.setText(ClonedVoiceProfiles.READY);
+                });
+            } catch (NarrationException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    voiceInfo.setText(ClonedVoiceProfiles.FAILED + ex.getMessage());
+                    error(ClonedVoiceProfiles.FAILED + ex.getMessage());
+                });
+            }
         });
     }
 
@@ -658,6 +734,8 @@ final class VideoStudioWindow extends JFrame {
         VideoStudioSettings settings = studio.settings();
         JTextField ffmpeg = new JTextField(settings.ffmpegPath(), 32);
         JTextField piper = new JTextField(settings.piperPath(), 32);
+        JTextField cloning = new JTextField(settings.cloningPath(), 32);
+        JTextField cloningModel = new JTextField(settings.cloningModelFolder(), 32);
         JTextField voicesFolder = new JTextField(settings.voicesFolder().toString(), 32);
         JTextField output = new JTextField(settings.outputFolder().toString(), 32);
         JTextField ollamaUrl = new JTextField(settings.ollamaUrl(), 32);
@@ -669,6 +747,8 @@ final class VideoStudioWindow extends JFrame {
         Object[][] rows = {
             {"FFmpeg (ffmpeg.exe, blank = search PATH):", ffmpeg, JFileChooser.FILES_AND_DIRECTORIES},
             {"Piper (piper.exe, blank = search):", piper, JFileChooser.FILES_AND_DIRECTORIES},
+            {"Voice cloning (Coqui tts, blank = search):", cloning, JFileChooser.FILES_AND_DIRECTORIES},
+            {"Local XTTS v2 model folder:", cloningModel, JFileChooser.DIRECTORIES_ONLY},
             {"Voices folder:", voicesFolder, JFileChooser.DIRECTORIES_ONLY},
             {"Output folder:", output, JFileChooser.DIRECTORIES_ONLY},
             {"Local AI address (Ollama):", ollamaUrl, null},
@@ -718,6 +798,8 @@ final class VideoStudioWindow extends JFrame {
         }
         settings.setFfmpegPath(ffmpeg.getText());
         settings.setPiperPath(piper.getText());
+        settings.setCloningPath(cloning.getText());
+        settings.setCloningModelFolder(cloningModel.getText());
         settings.setVoicesFolder(voicesFolder.getText());
         settings.setOutputFolder(output.getText());
         settings.setOllamaUrl(ollamaUrl.getText());
@@ -759,6 +841,13 @@ final class VideoStudioWindow extends JFrame {
             + "<i>vi_VN-vais1000-medium</i> or <i>en_US-amy-medium</i>) from huggingface.co/rhasspy/piper-voices, copy them into "
             + "the voices folder (<b>Open voices folder</b>) and click <b>Refresh</b>. An optional <i>&lt;name&gt;.voice.json</i> "
             + "sets <i>name</i>, <i>language</i> and <i>description</i>. Invalid files are listed in the log with the reason.</p>"
+            + "<h3>Clone voice from sample...</h3><p>Choose a local Coqui <i>tts</i> executable and a preinstalled XTTS v2 "
+            + "model folder (model.pth, config.json, vocab.json) in <b>Tools...</b>. Click <b>Clone voice from sample...</b>, "
+            + "upload a 6–60 second, 16-bit PCM WAV (mono/stereo, 8–96 kHz, max 20 MB), and name the profile. "
+            + "Only use audio you have permission to clone. A successful synthesis check saves a reusable local profile "
+            + "in the voices folder. Select it in clone mode and click <b>Preview voice</b> before export. "
+            + "This backend supports English narration, not Vietnamese. Microphone recording is unavailable; use upload. "
+            + "If cloning fails, existing Piper packs and export without narration remain available.</p>"
             + "<h3>Optional programs</h3><ul>"
             + "<li><b>FFmpeg</b> (required to export): install it and add it to PATH, or choose ffmpeg.exe in <b>Tools...</b>.</li>"
             + "<li><b>Piper</b> (narration): unzip the Piper release and choose piper.exe in <b>Tools...</b>. Without it the video "
