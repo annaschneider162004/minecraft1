@@ -1,8 +1,14 @@
 package com.annaschneider.minecraft1.desktop;
 
 import com.annaschneider.minecraft1.video.BuildContext;
+import com.annaschneider.minecraft1.video.ExportMode;
 import com.annaschneider.minecraft1.video.ExportRequest;
 import com.annaschneider.minecraft1.video.ExportResult;
+import com.annaschneider.minecraft1.video.FlowListener;
+import com.annaschneider.minecraft1.video.FlowRequest;
+import com.annaschneider.minecraft1.video.FlowResult;
+import com.annaschneider.minecraft1.video.FlowStage;
+import com.annaschneider.minecraft1.video.FlowStatus;
 import com.annaschneider.minecraft1.video.Storyboard;
 import com.annaschneider.minecraft1.video.VideoExportException;
 import com.annaschneider.minecraft1.video.render.RenderOptions;
@@ -19,6 +25,7 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineEvent;
 import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
@@ -61,12 +68,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Supplier;
 
 /**
  * Video Studio: 1) type a prompt, 2) add recorded footage, 3) pick a voice, then write the story and export a narrated
- * MP4. Runs entirely on this computer and is independent of the Minecraft connection: it can be used after a build or
- * on any existing recording. Long work runs on a background thread; the window stays responsive.
+ * MP4. Or 5) pick a mode (Record only, Narrate only, Auto-export when both complete) and click Start: the screen is
+ * recorded while the narration is generated, and the final video is exported automatically. Runs entirely on this
+ * computer and is independent of the Minecraft connection. Long work runs on a background thread; the window stays
+ * responsive.
  */
 final class VideoStudioWindow extends JFrame {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -98,11 +108,21 @@ final class VideoStudioWindow extends JFrame {
     private final JProgressBar progress = new JProgressBar();
     private final JTextArea logArea = new JTextArea(7, 60);
     private final List<JComponent> busyDisabled = new ArrayList<>();
+    private final JComboBox<ExportMode> modeBox = new JComboBox<>(ExportMode.values());
+    private final JSpinner recordSpinner = new JSpinner(new SpinnerNumberModel(VideoStudioSettings.DEFAULT_RECORD_SECONDS,
+        VideoStudioSettings.MIN_RECORD_SECONDS, (int) com.annaschneider.minecraft1.video.ExportFlow.MAX_RECORD_SECONDS, 5));
+    private final JButton startButton = new JButton("Start");
+    private final JButton cancelButton = new JButton("Cancel");
+    private final JLabel flowLabel = new JLabel(FlowStatus.idle().label("en"));
+    private final JLabel recordingLine = new JLabel(" ");
+    private final JLabel narrationLine = new JLabel(" ");
+    private final JLabel outputLabel = new JLabel(" ");
 
     private VoiceDiscovery voices;
     private Storyboard storyboard;
     private boolean busy;
     private Path lastExport;
+    private Future<?> flowTask;
 
     VideoStudioWindow(VideoStudio studio, Supplier<BuildContext> buildContext, Supplier<String> buildDescription, Path replayVideos) {
         super("Minecraft Architect - Video Studio");
@@ -116,6 +136,8 @@ final class VideoStudioWindow extends JFrame {
         setLocationRelativeTo(null);
         setContentPane(buildContent());
         localAiBox.setSelected(studio.settings().useLocalAi());
+        modeBox.setSelectedItem(studio.settings().exportMode());
+        recordSpinner.setValue(studio.settings().recordSeconds());
         refreshVoices();
     }
 
@@ -131,7 +153,8 @@ final class VideoStudioWindow extends JFrame {
         JPanel root = new JPanel(new BorderLayout(0, 8));
         root.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
         JLabel intro = new JLabel("<html>Turn a build into a narrated video: describe the video, add recorded footage, pick a "
-            + "voice, then <b>Write story</b> and <b>Export video</b>. Everything runs on this computer.</html>");
+            + "voice, then <b>Write story</b> and <b>Export video</b> - or pick a mode in step 5 and click <b>Start</b> to record "
+            + "and narrate at the same time and export automatically. Everything runs on this computer.</html>");
         root.add(intro, BorderLayout.NORTH);
 
         JSplitPane columns = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, buildInputs(), buildStoryPanel());
@@ -302,7 +325,54 @@ final class VideoStudioWindow extends JFrame {
         buttons.add(tools);
         buttons.add(help);
         busyDisabled.addAll(List.of(writeButton, exportButton, previewButton, tools));
-        panel.add(buttons, BorderLayout.SOUTH);
+        JPanel south = new JPanel();
+        south.setLayout(new BoxLayout(south, BoxLayout.Y_AXIS));
+        buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
+        south.add(buttons);
+        JComponent flow = buildFlowPanel();
+        flow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        south.add(flow);
+        panel.add(south, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JComponent buildFlowPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+        JLabel heading = title("5. Record, narrate and export automatically");
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        controls.add(new JLabel("Mode:"));
+        modeBox.setToolTipText("<html><b>Record only</b>: record the screen and save the raw video.<br><b>Narrate only</b>: "
+            + "make the narration audio (WAV), script and subtitles.<br><b>Auto-export when both complete</b>: record and "
+            + "narrate at the same time, then mux and export the final MP4 automatically.</html>");
+        modeBox.addActionListener(event -> {
+            ExportMode mode = (ExportMode) modeBox.getSelectedItem();
+            studio.settings().setExportMode(mode);
+            recordSpinner.setEnabled(!busy && mode != null && mode.records());
+        });
+        controls.add(modeBox);
+        controls.add(new JLabel("Record (seconds):"));
+        recordSpinner.setToolTipText("How long the screen is recorded. Show the Minecraft window while recording.");
+        recordSpinner.addChangeListener(event -> studio.settings().setRecordSeconds(((Number) recordSpinner.getValue()).intValue()));
+        controls.add(recordSpinner);
+        startButton.setFont(startButton.getFont().deriveFont(Font.BOLD));
+        startButton.setToolTipText("Run the selected mode. Writes the story first if needed.");
+        startButton.addActionListener(event -> startFlow());
+        cancelButton.setToolTipText("Stop recording and narration; finished files are kept.");
+        cancelButton.setEnabled(false);
+        cancelButton.addActionListener(event -> cancelFlow());
+        controls.add(startButton);
+        controls.add(cancelButton);
+        busyDisabled.addAll(List.of(modeBox, recordSpinner, startButton));
+        flowLabel.setFont(flowLabel.getFont().deriveFont(Font.BOLD));
+        recordingLine.setForeground(Color.GRAY);
+        narrationLine.setForeground(Color.GRAY);
+        outputLabel.setForeground(Color.GRAY);
+        for (JComponent component : List.of(heading, controls, flowLabel, recordingLine, narrationLine, outputLabel)) {
+            component.setAlignmentX(Component.LEFT_ALIGNMENT);
+            panel.add(component);
+        }
         return panel;
     }
 
@@ -401,6 +471,114 @@ final class VideoStudioWindow extends JFrame {
                 SwingUtilities.invokeLater(() -> error("Export failed: " + ex.getMessage()));
             }
         });
+    }
+
+    private void startFlow() {
+        if (storyboard == null || !storyboard.prompt().equals(promptArea.getText().strip())) {
+            writeStory(this::startFlow);
+            return;
+        }
+        ExportMode mode = modeBox.getSelectedItem() instanceof ExportMode chosen ? chosen : ExportMode.AUTO_EXPORT;
+        VoicePack voice = selectedVoice();
+        if (mode.narrates() && voice != null && !voice.storyLanguage().equals(storyboard.language())) {
+            log("Note: the story is in '" + storyboard.language() + "' but the voice speaks '" + voice.language()
+                + "'. Click Write story again to match the voice.");
+        }
+        BuildContext built = buildContext.get();
+        // fresh footage: milestones of an earlier recording do not line up with it, so scenes are spread evenly
+        BuildContext context = new BuildContext(built.buildName(), List.of(), built.sections(), built.blocks());
+        FlowRequest request = new FlowRequest(mode, storyboard, context, voice, ((Number) recordSpinner.getValue()).doubleValue(),
+            studio.settings().outputFolder(), null, RenderOptions.hd720());
+        String language = storyboard.language();
+        outputLabel.setText(" ");
+        Future<?> task = runInBackground(mode.label() + "...", () -> {
+            FlowResult result = studio.flow().run(request, new FlowListener() {
+                @Override
+                public void status(FlowStatus status) {
+                    SwingUtilities.invokeLater(() -> showFlowStatus(status, language));
+                }
+
+                @Override
+                public void progress(String message) {
+                    SwingUtilities.invokeLater(() -> {
+                        progress.setString(message);
+                        log(message);
+                    });
+                }
+            });
+            SwingUtilities.invokeLater(() -> finishFlow(result, language));
+        });
+        if (task != null) {
+            flowTask = task;
+            cancelButton.setEnabled(true);
+        }
+    }
+
+    private void cancelFlow() {
+        if (flowTask != null) {
+            log("Cancelling...");
+            flowTask.cancel(true);
+        }
+    }
+
+    private void showFlowStatus(FlowStatus status, String language) {
+        flowLabel.setText(status.label(language));
+        flowLabel.setForeground(status.stage() == FlowStage.FAILED ? new Color(0xb00020)
+            : status.stage() == FlowStage.COMPLETE ? new Color(0x1b7f3a) : Color.BLACK);
+        recordingLine.setText(status.recordingLine(language));
+        narrationLine.setText(status.narrationLine(language));
+    }
+
+    private void finishFlow(FlowResult result, String language) {
+        result.warnings().forEach(warning -> log("Note: " + warning));
+        for (Path file : new Path[] {result.recording(), result.narration(), result.script(), result.subtitles()}) {
+            if (file != null) {
+                log("Saved " + file);
+            }
+        }
+        if (result.ok()) {
+            lastExport = result.output();
+            outputLabel.setText("Output: " + result.output());
+            outputLabel.setToolTipText(result.output().toString());
+            log(FlowStage.COMPLETE.label(language) + ": " + result.output());
+            String[] options = {result.mode() == ExportMode.NARRATE_ONLY ? "Open audio" : "Open video", "Open folder", "Close"};
+            int choice = JOptionPane.showOptionDialog(this, FlowStage.COMPLETE.label(language) + "\n" + result.output()
+                + (result.warnings().isEmpty() ? "" : "\n\n" + String.join("\n", result.warnings())), result.mode().label(),
+                JOptionPane.DEFAULT_OPTION, result.warnings().isEmpty() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE,
+                null, options, options[0]);
+            if (choice == 0) {
+                openFile(result.output());
+            } else if (choice == 1) {
+                openFolder(result.output().getParent(), false);
+            }
+        } else if (result.stage() == FlowStage.FAILED && result.failure() != null) {
+            String message = FlowStage.FAILED.label(language) + result.failure().reason(language);
+            log("Problem: " + FlowStage.FAILED.label(language) + result.failure().describe(language));
+            boolean kept = result.recording() != null || result.narration() != null;
+            outputLabel.setText(kept ? "Finished files were kept in " + studio.settings().outputFolder() : " ");
+            String[] options = {"Retry", "Close"};
+            int choice = JOptionPane.showOptionDialog(this, message + "\n\n" + result.failure().detail()
+                + (kept ? "\n\nFinished files were kept in the output folder." : ""), "Video Studio",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
+            if (choice == 0) {
+                // queued after the end of the finished background task, so the retry is not refused as "busy"
+                SwingUtilities.invokeLater(this::startFlow);
+            }
+        } else {
+            log(FlowStage.CANCELLED.label(language));
+        }
+    }
+
+    private void openFile(Path file) {
+        try {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+                Desktop.getDesktop().open(file.toFile());
+            } else {
+                log("File: " + file);
+            }
+        } catch (IOException | UnsupportedOperationException | SecurityException | IllegalArgumentException ex) {
+            error("Cannot open " + file + ": " + ex.getMessage());
+        }
     }
 
     private void previewVoice() {
@@ -565,6 +743,18 @@ final class VideoStudioWindow extends JFrame {
             + "<li><b>Write story</b>, then <b>Export video</b>. The MP4, subtitles (.srt) and script are saved in the output folder.</li></ol>"
             + "<p>Scenes follow the progress of the last build made with this app (start, 25 %, 75 %, finish). "
             + "Without it, scenes are spread evenly over the footage.</p>"
+            + "<h3>Automatic recording and narration (step 5)</h3><p>Pick a <b>Mode</b> and click <b>Start</b>:</p><ul>"
+            + "<li><b>Record only</b>: records the screen for <i>Record (seconds)</i> and saves the raw video "
+            + "(<i>&lt;name&gt;-recording.mp4</i>).</li>"
+            + "<li><b>Narrate only</b>: speaks the story with the selected voice and saves <i>&lt;name&gt;-narration.wav</i>, "
+            + "the script and subtitles. No recording; FFmpeg is not needed.</li>"
+            + "<li><b>Auto-export when both complete</b>: records the screen and generates the narration at the same time. "
+            + "When both are finished the narration is muxed into the recording and the MP4 is exported automatically.</li></ul>"
+            + "<p>Status: <i>Checking dependencies... &rarr; Recording video... + Generating narration... &rarr; Waiting for "
+            + "remaining job... &rarr; Muxing audio and video... &rarr; Export complete</i> (or <i>Export failed: reason</i>; "
+            + "Vietnamese stories show Vietnamese labels). Keep the Minecraft window visible while recording (Windows: whole "
+            + "desktop, macOS: screen 0, Linux: X11 display). If a job fails, nothing is exported, the finished recording or "
+            + "narration stays in the output folder, and <b>Retry</b> starts again. <b>Cancel</b> stops both jobs.</p>"
             + "<h3>Voices</h3><p>Download a Piper voice (both the <i>.onnx</i> and <i>.onnx.json</i> file, e.g. "
             + "<i>vi_VN-vais1000-medium</i> or <i>en_US-amy-medium</i>) from huggingface.co/rhasspy/piper-voices, copy them into "
             + "the voices folder (<b>Open voices folder</b>) and click <b>Refresh</b>. An optional <i>&lt;name&gt;.voice.json</i> "
@@ -600,13 +790,14 @@ final class VideoStudioWindow extends JFrame {
         return selected instanceof VoicePack voice ? voice : null;
     }
 
-    private void runInBackground(String message, Runnable task) {
+    /** @return the running task (cancel it to interrupt the work), or {@code null} when another task is still running */
+    private Future<?> runInBackground(String message, Runnable task) {
         if (busy) {
             log("Please wait - still working.");
-            return;
+            return null;
         }
         setBusy(true, message);
-        worker.execute(() -> {
+        return worker.submit(() -> {
             try {
                 task.run();
             } catch (RuntimeException ex) {
@@ -622,6 +813,12 @@ final class VideoStudioWindow extends JFrame {
         progress.setIndeterminate(value);
         progress.setString(message);
         busyDisabled.forEach(component -> component.setEnabled(!value));
+        if (!value) {
+            ExportMode mode = (ExportMode) modeBox.getSelectedItem();
+            recordSpinner.setEnabled(mode != null && mode.records());
+            flowTask = null;
+            cancelButton.setEnabled(false);
+        }
         if (value) {
             log(message);
         }

@@ -39,6 +39,22 @@ class NarrationTest {
     }
 
     @Test
+    void joinsSceneNarrationIntoOneTrackAlignedWithTheStory(@TempDir Path dir) throws Exception {
+        TestSupport.FakeTts tts = new TestSupport.FakeTts();
+        Storyboard story = new Storyboard("t", "p", "en", "template", List.of(
+            new Scene(0, SceneKind.INTRO, "a", "one two three", 0, 0, 5),
+            new Scene(1, SceneKind.TIMELAPSE, "b", "", 0, 1, 4),
+            new Scene(2, SceneKind.FINALE, "c", "four five", 1, 1, 3)));
+        List<NarrationClip> clips = new Narrator(List.of(tts)).narrate(story, TestSupport.voice(dir), dir, message -> { });
+        java.util.Map<Integer, NarrationClip> byScene = new java.util.HashMap<>();
+        clips.forEach(clip -> byScene.put(clip.sceneIndex(), clip));
+        Path track = com.annaschneider.minecraft1.video.voice.NarrationTrackWriter.write(story, byScene, dir.resolve("out/track.wav"));
+        assertEquals(12, WavInfo.seconds(track), 0.01);
+        assertThrows(NarrationException.class, () -> com.annaschneider.minecraft1.video.voice.NarrationTrackWriter.write(story,
+            java.util.Map.of(), dir.resolve("empty.wav")));
+    }
+
+    @Test
     void previewUsesASampleInTheVoiceLanguage(@TempDir Path dir) throws Exception {
         TestSupport.FakeTts tts = new TestSupport.FakeTts();
         VoicePack vi = new VoicePack("vi_VN-x-low", "X", "vi_VN", "piper", dir.resolve("m.onnx"), dir.resolve("m.onnx.json"), 16000, "");

@@ -57,11 +57,16 @@ public final class FfmpegTool {
 
     /** Runs ffmpeg with {@code arguments} (overwriting outputs, errors only) and fails with ffmpeg's last lines. */
     public void run(List<String> arguments, String step) throws VideoExportException {
+        run(arguments, step, RENDER_TIMEOUT);
+    }
+
+    /** Like {@link #run(List, String)} with a custom time limit (e.g. for screen recording). */
+    public void run(List<String> arguments, String step, Duration timeout) throws VideoExportException {
         List<String> command = new ArrayList<>();
         command.add(executable.toString());
         command.addAll(List.of("-hide_banner", "-nostdin", "-y", "-loglevel", "error"));
         command.addAll(arguments);
-        ProcessRunner.Result result = execute(command, RENDER_TIMEOUT, step);
+        ProcessRunner.Result result = execute(command, timeout, step);
         if (!result.ok()) {
             throw new VideoExportException("FFmpeg failed while " + step + " (exit code " + result.exitCode() + "): "
                 + result.tail(3));
