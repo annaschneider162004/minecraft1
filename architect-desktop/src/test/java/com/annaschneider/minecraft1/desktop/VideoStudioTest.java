@@ -1,0 +1,127 @@
+package com.annaschneider.minecraft1.desktop;
+
+import com.annaschneider.minecraft1.link.JobStatus;
+import com.annaschneider.minecraft1.link.PlanSummary;
+import com.annaschneider.minecraft1.link.RegionBox;
+import com.annaschneider.minecraft1.video.BuildContext;
+import com.annaschneider.minecraft1.video.BuildMilestone;
+import com.annaschneider.minecraft1.video.ExecutableLocator;
+import com.annaschneider.minecraft1.video.ProcessRunner;
+import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.prefs.Preferences;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class VideoStudioTest {
+    @Test
+    void recordsMilestonesRelativeToTheRecordingStart() {
+        AtomicLong now = new AtomicLong(1_000_000);
+        BuildTimelineRecorder timeline = new BuildTimelineRecorder(now::get);
+        assertFalse(timeline.hasBuild());
+        timeline.plan(new PlanSummary("white-palace", "t", "x", 10, 10, 10, 5000,
+            List.of(new RegionBox("PALACE", 0, 0, 1, 1), new RegionBox("water_fall", 0, 0, 1, 1), new RegionBox("PALACE", 0, 0, 1, 1))));
+        timeline.recordingStarted();
+        now.addAndGet(4_000);
+        timeline.onJob(job(7, "queued", 0, 0));
+        timeline.onJob(job(7, "running", 2, 10));
+        now.addAndGet(10_000);
+        timeline.onJob(job(7, "running", 8, 100));
+        timeline.onJob(job(7, "running", 12, 150));
+        timeline.onJob(job(7, "paused", 12, 150));
+        now.addAndGet(20_000);
+        timeline.onJob(job(7, "running", 55, 700));
+        now.addAndGet(6_000);
+        timeline.onJob(job(7, "completed", 100, 1234));
+        timeline.onJob(new JobStatus(8, "white-palace", "undo", "running", 50, 1, 2, 3, false, null));
+
+        BuildContext context = timeline.snapshot();
+        assertTrue(timeline.hasBuild());
+        assertEquals("white-palace", context.buildName());
+        assertEquals(List.of("palace", "water fall"), context.sections());
+        assertEquals(1234, context.blocks());
+        assertEquals(List.of(new BuildMilestone(4, 2, "started"), new BuildMilestone(14, 10, "10%"),
+            new BuildMilestone(34, 50, "50%"), new BuildMilestone(40, 100, "completed")),
+            context.milestones());
+        assertTrue(timeline.describe().contains("4 milestones"));
+
+        // a later build without recording starts its own timeline at the build start
+        timeline.recordingStopped();
+        now.addAndGet(60_000);
+        timeline.onJob(job(9, "running", 0, 0));
+        assertEquals(List.of(new BuildMilestone(0, 0, "started")), timeline.snapshot().milestones());
+    }
+
+    @Test
+    void settingsRoundTripWithSafeDefaults() throws Exception {
+        Preferences node = Preferences.userRoot().node("architect-video-test-" + UUID.randomUUID());
+        try {
+            VideoStudioSettings settings = new VideoStudioSettings(node);
+            assertEquals("", settings.ffmpegPath());
+            assertFalse(settings.useLocalAi());
+            assertEquals("http://127.0.0.1:11434", settings.ollamaUrl());
+            assertEquals(VideoStudioSettings.defaultOutputFolder(), settings.outputFolder());
+            settings.setFfmpegPath("  C:/ffmpeg/bin/ffmpeg.exe ");
+            settings.setVoicesFolder("/data/voices");
+            settings.setVoiceId("vi_VN-vais1000-medium");
+            settings.setUseLocalAi(true);
+            settings.setOutputFolder("");
+            node.flush();
+            VideoStudioSettings reopened = new VideoStudioSettings(Preferences.userRoot().node(node.absolutePath()));
+            assertEquals("C:/ffmpeg/bin/ffmpeg.exe", reopened.ffmpegPath());
+            assertEquals(Path.of("/data/voices"), reopened.voicesFolder());
+            assertEquals("vi_VN-vais1000-medium", reopened.voiceId());
+            assertTrue(reopened.useLocalAi());
+            assertEquals(VideoStudioSettings.defaultOutputFolder(), reopened.outputFolder());
+        } finally {
+            node.removeNode();
+        }
+    }
+
+    @Test
+    void diagnosticsExplainMissingToolsAndInvalidVoices(@TempDir Path dir) throws Exception {
+        Preferences node = Preferences.userRoot().node("architect-video-test-" + UUID.randomUUID());
+        try {
+            VideoStudioSettings settings = new VideoStudioSettings(node);
+            Path voices = Files.createDirectories(dir.resolve("voices"));
+            Files.write(voices.resolve("lonely.onnx"), new byte[] {1});
+            settings.setVoicesFolder(voices.toString());
+            settings.setFfmpegPath(dir.resolve("missing-ffmpeg.exe").toString());
+            settings.setPiperPath(dir.resolve("missing-piper.exe").toString());
+            ProcessRunner never = (command, stdin, timeout) -> {
+                throw new AssertionError("no program should run");
+            };
+            VideoStudio studio = new VideoStudio(settings, new ExecutableLocator("", false, name -> null), never);
+            VoiceDiscovery found = studio.discoverVoices();
+            assertTrue(found.voices().isEmpty());
+            String report = String.join("\n", studio.diagnostics(found));
+            assertTrue(report.contains("FFmpeg: NOT FOUND"), report);
+            assertTrue(report.contains("Piper voice engine: NOT FOUND"), report);
+            assertTrue(report.contains("lonely.onnx: missing config file"), report);
+            assertTrue(report.contains("built-in templates"), report);
+            assertTrue(studio.narrator().supportedEngines().contains("piper"));
+        } finally {
+            node.removeNode();
+        }
+    }
+
+    @Test
+    void replayVideosFolderSitsNextToTheGameConfig() {
+        Path link = Path.of("/games/.minecraft/config/architect/desktop-link.json");
+        assertEquals(Path.of("/games/.minecraft/replay_videos"), VideoStudio.replayVideosFolder(link));
+        assertTrue(VideoStudioWindow.helpHtml().contains("voices folder"));
+    }
+
+    private static JobStatus job(long id, String state, double percent, long blocks) {
+        return new JobStatus(id, "white-palace", "build", state, percent, 0, 0, blocks, false, null);
+    }
+}

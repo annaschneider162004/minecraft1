@@ -224,6 +224,10 @@ minecraft1/
 ├── architect-mod/         # Fabric entrypoint, /architect commands wired to the large-build engine
 │   ├── link/              #   DesktopBridge (desktop requests -> commands, progress push), headless LinkDemoServer
 │   └── runtime/           #   ArchitectServerRuntime (engine + bridge lifecycle for the Fabric adapter), config
+├── video-studio/          # prompt -> story -> clip plan -> narration (Piper) -> MP4 (FFmpeg); no Minecraft dependency
+│   ├── story/             #   prompt analysis, deterministic templates (EN/VI), optional local Ollama writer, fallback
+│   ├── voice/             #   voice-pack discovery/validation, TTS engine SPI, Piper engine, narrator
+│   └── render/            #   FFmpeg locator/probe, segment renderer, subtitles
 └── architect-desktop/     # Windows desktop companion app (Swing), talks to the mod via architect-link
 ```
 
@@ -263,7 +267,13 @@ Included unit tests:
   names), JSON codec round-trips and lowercase wire names, link-file read/write, server/client handshake, wrong token,
   oversized lines, timeouts and connection-refused messages
 - `architect-desktop`: plan-name suggestion/validation, picture checks (type, empty, too large), safe upload names and
-  default link-file locations on Windows/macOS/Linux
+  default link-file locations on Windows/macOS/Linux; Video Studio build timeline (milestones relative to the recording),
+  settings round-trip and diagnostics for missing FFmpeg/Piper and invalid voice packs
+- `video-studio`: prompt analysis (length, language, timelapse), deterministic template stories and the fallback when the
+  local AI is absent or answers garbage, Ollama URL/model validation, segment planning from milestones (ordering,
+  trimming, timelapse speed-up, fades), voice-pack discovery/validation (missing config, bad JSON, unsupported engine,
+  duplicates, symlink escapes), narration hooks, export orchestration (narrated, non-narrated when TTS fails, title cards
+  without footage, missing FFmpeg, temp-file cleanup) and, when FFmpeg is installed, a real MP4 render
 
 ## Large-build engine (multi-million-block builds)
 
@@ -577,6 +587,69 @@ gradle :architect-mod:runLinkDemo        & rem simulated server + player "DemoPl
 gradle :architect-desktop:runWithDemo    & rem the app, connected to the demo
 ```
 
+### Video Studio: narrated build videos / Video tự động + lồng tiếng
+
+Click **Video Studio...** in the connection bar. Everything runs on this computer: no account, API key or upload.
+
+1. **Record the build** – **Build + Record** (ReplayMod) or any screen recorder (OBS…). For ReplayMod open the replay and
+   use *Render* to save an MP4 into `.minecraft\replay_videos`. While a build runs, the app notes its milestones
+   (start, every 10 %, finish) relative to the recording start; the story uses them to pick matching footage.
+2. **Write a prompt** – e.g. `60 second video: a kingdom rises from a deserted island`. A length in the text
+   (`45 seconds`, `2 phút`) wins over the *Length* box, `timelapse`/`fast` gives more sped-up footage, Vietnamese text (or
+   a Vietnamese voice) gives a Vietnamese story.
+3. **Add footage** – **ReplayMod videos...** or **Add videos...** (MP4/MKV/MOV/WebM…). Without footage the video is made
+   of title cards. Unreadable files are skipped with a warning.
+4. **Pick a voice** – choose from the list and click **Preview voice**.
+5. **Write story** (editable scene list: title, narration, footage moment) → **Export video**. The output folder
+   (default `Videos\Minecraft Architect`) receives `<title>-<date>.mp4` (H.264 + AAC), `.srt` subtitles and
+   `-story.txt`. Temporary clips go to a `architect-video-*` temp folder that is deleted afterwards.
+
+Pipeline stages (module `video-studio`, usable without the game): prompt analysis → story (`TemplateStoryGenerator`, or
+`LocalLlmStoryGenerator` with automatic fallback) → narration (`Narrator` + `TtsEngine`) → scene lengths fitted to the
+narration → `SegmentPlanner` (clip selection, ordering, trimming, timelapse up to 200×, 0.5 s fades) →
+`VideoRenderer` (FFmpeg) → `VideoPipeline` writes the files.
+
+**Optional programs** (paths can also be chosen in **Tools...**):
+
+| Program | Needed for | Without it |
+|---|---|---|
+| [FFmpeg](https://ffmpeg.org) (on PATH, or `ARCHITECT_FFMPEG`) | exporting any video | Export shows "FFmpeg was not found" with install steps; story writing still works |
+| [Piper](https://github.com/rhasspy/piper) (on PATH, or `ARCHITECT_PIPER`) + a voice pack | narration | the video is exported **without narration** (warning in the log) |
+| [Ollama](https://ollama.com) (`ollama pull llama3.2`, tick **Use local AI**) | AI-written story | the built-in templates are used (also when Ollama is down, slow or answers nonsense) |
+
+Ollama is only contacted on `localhost`/`127.0.0.1`/`::1`.
+
+**Voice packs** – the voices folder is `%APPDATA%\MinecraftArchitect\voices` (macOS:
+`~/Library/Application Support/MinecraftArchitect/voices`, Linux: `~/.minecraft-architect/voices`; override with
+`ARCHITECT_VOICES_DIR` or in **Tools...**). Add a voice without any code change:
+
+1. Download a Piper voice from <https://huggingface.co/rhasspy/piper-voices>, e.g. `vi_VN-vais1000-medium.onnx` **and**
+   `vi_VN-vais1000-medium.onnx.json` (Vietnamese) or `en_US-amy-medium.*` (English).
+2. Copy both files into the voices folder (**Open voices folder**), directly or in one sub-folder, and click **Refresh**
+   (voices are also discovered at startup and listed in the log).
+3. Optional `<id>.voice.json` next to the model to set metadata:
+   `{"name": "Bà kể chuyện", "language": "vi-VN", "engine": "piper", "description": "warm"}`.
+
+A pack is rejected (and listed with the reason in the log / **Tools...**) when the config is missing, the model is empty
+or larger than 2 GB, the JSON is invalid or over 1 MB, the engine is not `piper`, the language or sample rate is invalid,
+the id is already used or the files point outside the voices folder.
+
+**Troubleshooting**
+
+- *"FFmpeg was not found"* – install FFmpeg (`winget install ffmpeg`), restart the app or pick `ffmpeg.exe` in **Tools...**.
+- *"Narration skipped: …"* – Piper or the voice is missing/broken; the MP4 is still exported. Check **Tools...**, which
+  lists every program and every rejected voice pack.
+- *"No voices yet"* – the folder must contain both `.onnx` and `.onnx.json` with the same name.
+- *"Local AI unavailable, using templates"* – start Ollama (`ollama serve`) and pull the model, or untick **Use local AI**.
+- *Export failed* – the log shows the last FFmpeg lines. Re-render the replay to a standard MP4, check free disk space
+  and that the output folder is writable.
+
+**Tiếng Việt:** bấm **Video Studio...** → gõ yêu cầu (ví dụ *Video 60 giây kể chuyện một vương quốc mọc lên từ đảo
+hoang*) → **ReplayMod videos...** để thêm video đã render → chọn giọng, bấm **Preview voice** để nghe thử → **Write
+story** → **Export video**. Cần cài **FFmpeg**; muốn có giọng đọc thì cài **Piper** và chép giọng (`.onnx` + `.onnx.json`)
+vào thư mục voices rồi bấm **Refresh**. Không có Piper/giọng thì video vẫn được xuất nhưng không có lời đọc; không có
+Ollama thì dùng kịch bản mẫu.
+
 ### Hướng dẫn nhanh (tiếng Việt)
 
 1. Cài **Java 17** (Temurin 17) và **Gradle**, tải repo về (Code → Download ZIP) rồi giải nén.
@@ -634,5 +707,8 @@ gradle :architect-desktop:runWithDemo    & rem the app, connected to the demo
   very dense builds, and its distance, altitude and speed are clamped rather than path-planned.
 - Builder NPCs are cosmetic: they are teleported around the frontier instead of pathfinding, they are not pushable or
   damageable, they carry no items and they do not persist across a restart (they are removed on shutdown).
+- Video Studio does not look at the footage: scenes are matched to build progress and time, not to what is on screen.
+  The first version cuts, speeds up and fades clips; it has no music, overlays or burned-in captions (an `.srt` file is
+  written instead). FFmpeg and Piper are not bundled.
 - The picture uploaded from the desktop app is analysed with the same heuristic planner (see above); the preview is a
   top-down region map, not a 3D render.

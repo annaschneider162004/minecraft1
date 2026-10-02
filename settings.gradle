@@ -17,4 +17,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = 'minecraft1'
-include 'architect-domain', 'build-assistant', 'instant-builder', 'build-transformer', 'world-generator', 'ai-foundation', 'large-build', 'architect-link', 'architect-mod', 'architect-desktop', 'fabric-stubs'
+include 'architect-domain', 'build-assistant', 'instant-builder', 'build-transformer', 'world-generator', 'ai-foundation', 'large-build', 'architect-link', 'architect-mod', 'architect-desktop', 'video-studio', 'fabric-stubs'
