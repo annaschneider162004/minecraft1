@@ -100,6 +100,9 @@ public final class ExportFlow {
                 if (recording != JobState.DONE) {
                     deleteQuietly(recordTarget); // never keep a half-written recording
                 }
+                if (narration != JobState.DONE) {
+                    deleteQuietly(narrationTarget); // nor a narration track that was cancelled or failed
+                }
                 VideoPipeline.deleteRecursively(work);
             }
         }
@@ -237,7 +240,7 @@ public final class ExportFlow {
         private FlowResult mux(String stem) {
             emit(FlowStage.MUXING);
             listener.progress(FlowStage.MUXING.label(language));
-            ExportRequest export = new ExportRequest(request.storyboard(), request.context(), List.of(recordingFile), request.voice(),
+            ExportRequest export = new ExportRequest(narrated.storyboard(), request.context(), List.of(recordingFile), request.voice(),
                 request.outputFolder(), request.baseName(), request.options(), false);
             try {
                 ExportResult result = pipeline.export(export, narrated, stem, listener::progress);

@@ -24,6 +24,7 @@ public final class ScreenRecorder implements FootageRecorder {
     private final Supplier<Optional<FfmpegTool>> ffmpeg;
     private final Optional<List<String>> input;
     private final String grabber;
+    private final String osName;
 
     public ScreenRecorder(Supplier<Optional<FfmpegTool>> ffmpeg) {
         this(ffmpeg, System.getProperty("os.name", ""), System::getenv);
@@ -31,6 +32,7 @@ public final class ScreenRecorder implements FootageRecorder {
 
     ScreenRecorder(Supplier<Optional<FfmpegTool>> ffmpeg, String osName, Function<String, String> environment) {
         this.ffmpeg = ffmpeg;
+        this.osName = osName == null || osName.isBlank() ? "this system" : osName;
         this.input = captureInput(osName, environment);
         this.grabber = input.map(args -> args.get(1)).orElse("none");
     }
@@ -60,8 +62,8 @@ public final class ScreenRecorder implements FootageRecorder {
     @Override
     public Optional<String> unavailableReason() {
         if (input.isEmpty()) {
-            return Optional.of("Screen recording needs an X11 display (DISPLAY is not set). Record with OBS or ReplayMod "
-                + "instead and use Export video.");
+            return Optional.of("Screen recording is not available on " + osName + ": it needs Windows, macOS or an X11 "
+                + "display (DISPLAY is not set). Record with OBS or ReplayMod instead and use Export video.");
         }
         return ffmpeg.get().isPresent() ? Optional.empty() : Optional.of(FfmpegTool.MISSING_MESSAGE);
     }

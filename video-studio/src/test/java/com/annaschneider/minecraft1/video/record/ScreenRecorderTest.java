@@ -58,5 +58,6 @@ class ScreenRecorderTest {
         assertTrue(error.getMessage().contains("FFmpeg"));
         ScreenRecorder noDisplay = new ScreenRecorder(Optional::empty, "Linux", name -> null);
         assertTrue(noDisplay.unavailableReason().orElseThrow().contains("DISPLAY"));
+        assertTrue(noDisplay.unavailableReason().orElseThrow().contains("not available on Linux"));
     }
 }

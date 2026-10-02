@@ -478,9 +478,9 @@ final class VideoStudioWindow extends JFrame {
             writeStory(this::startFlow);
             return;
         }
-        ExportMode mode = (ExportMode) modeBox.getSelectedItem();
+        ExportMode mode = modeBox.getSelectedItem() instanceof ExportMode chosen ? chosen : ExportMode.AUTO_EXPORT;
         VoicePack voice = selectedVoice();
-        if (mode != null && mode.narrates() && voice != null && !voice.storyLanguage().equals(storyboard.language())) {
+        if (mode.narrates() && voice != null && !voice.storyLanguage().equals(storyboard.language())) {
             log("Note: the story is in '" + storyboard.language() + "' but the voice speaks '" + voice.language()
                 + "'. Click Write story again to match the voice.");
         }

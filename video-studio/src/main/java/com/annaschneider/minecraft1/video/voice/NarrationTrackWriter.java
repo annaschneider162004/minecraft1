@@ -8,9 +8,10 @@ import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.UnsupportedAudioFileException;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -20,6 +21,8 @@ import java.util.Map;
  * silence until the scene ends, so the track lines up with the storyboard. Pure Java (no FFmpeg needed).
  */
 public final class NarrationTrackWriter {
+    private static final byte[] SILENCE = new byte[64 * 1024];
+
     private NarrationTrackWriter() {
     }
 
@@ -39,29 +42,48 @@ public final class NarrationTrackWriter {
             throw new NarrationException("The narration audio format (" + format + ") is not supported; expected signed PCM WAV.");
         }
         int frameSize = format.getFrameSize();
-        ByteArrayOutputStream pcm = new ByteArrayOutputStream();
-        for (Scene scene : storyboard.scenes()) {
-            NarrationClip clip = clips.get(scene.index());
-            byte[] data = clip == null ? new byte[0] : read(clip.wav(), format);
-            pcm.write(data, 0, data.length);
-            long sceneBytes = Math.round(scene.durationSeconds() * format.getFrameRate()) * frameSize;
-            if (sceneBytes > data.length) {
-                pcm.write(new byte[(int) (sceneBytes - data.length)], 0, (int) (sceneBytes - data.length));
-            }
-        }
-        byte[] all = pcm.toByteArray();
-        try (AudioInputStream track = new AudioInputStream(new ByteArrayInputStream(all), format, all.length / frameSize)) {
+        Path pcm = null;
+        try {
             Files.createDirectories(output.toAbsolutePath().getParent());
-            AudioSystem.write(track, AudioFileFormat.Type.WAVE, output.toFile());
-        } catch (IOException ex) {
-            try {
-                Files.deleteIfExists(output);
-            } catch (IOException ignored) {
-                // nothing more to do
+            // raw samples go to a temporary file first, so long stories are never held in memory
+            pcm = Files.createTempFile(output.toAbsolutePath().getParent(), ".narration-", ".pcm");
+            long totalBytes = 0;
+            try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(pcm))) {
+                for (Scene scene : storyboard.scenes()) {
+                    NarrationClip clip = clips.get(scene.index());
+                    byte[] data = clip == null ? new byte[0] : read(clip.wav(), format);
+                    out.write(data);
+                    long sceneBytes = Math.round(scene.durationSeconds() * format.getFrameRate()) * frameSize;
+                    long padding = Math.max(0, sceneBytes - data.length);
+                    while (padding > 0) {
+                        int chunk = (int) Math.min(SILENCE.length, padding);
+                        out.write(SILENCE, 0, chunk);
+                        padding -= chunk;
+                    }
+                    totalBytes += Math.max(sceneBytes, data.length);
+                }
             }
+            try (AudioInputStream track = new AudioInputStream(new BufferedInputStream(Files.newInputStream(pcm)), format,
+                totalBytes / frameSize)) {
+                AudioSystem.write(track, AudioFileFormat.Type.WAVE, output.toFile());
+            }
+        } catch (IOException ex) {
+            deleteQuietly(output);
             throw new NarrationException("Could not save the narration track " + output.getFileName() + ": " + ex.getMessage(), ex);
+        } finally {
+            if (pcm != null) {
+                deleteQuietly(pcm);
+            }
         }
         return output;
+    }
+
+    private static void deleteQuietly(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException ignored) {
+            // nothing more to do
+        }
     }
 
     private static AudioFormat formatOf(Path wav) throws NarrationException {
