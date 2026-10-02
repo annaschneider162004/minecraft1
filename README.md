@@ -517,7 +517,7 @@ Open **Settings… → Camera & NPC Settings** to save these controls locally:
 **Save and apply** sends the bounded values through the local desktop link when connected. Changes made offline
 remain saved and are sent on reconnect (or when a player enters the world on an already-connected link). The camera
 remains off until filming starts; the server's `-Darchitect.camera=false` still prevents activation. NPC limits
-apply to running builds as well as new ones. On a dedicated server the desktop link must run on the same machine as
+apply to the selected player's running builds as well as new ones, without changing other players' crews. On a dedicated server the desktop link must run on the same machine as
 the mod; no client-only classes are loaded by the server.
 
 | What you see | What to do |

@@ -174,6 +174,28 @@ class BuildCrewCoordinatorTest {
     }
 
     @Test
+    void ownerSettingsDoNotChangeOtherPlayersCrews() {
+        FakeFactory factory = new FakeFactory();
+        BuildCrewCoordinator crew = new BuildCrewCoordinator(factory, new NpcSettings(false, 4, 16, 2));
+        UUID alice = UUID.randomUUID();
+        UUID bob = UUID.randomUUID();
+        var one = job(1, alice, JobState.RUNNING, 128);
+        var two = job(2, bob, JobState.RUNNING, 128);
+        Bounds area = new Bounds(0, 0, 0, 31, 31, 31);
+        crew.onJobStarted(one, area);
+        crew.onJobStarted(two, area);
+        crew.setOwnerSettings(alice, new NpcSettings(true, 2, 16, 2));
+        crew.setOwnerSettings(bob, new NpcSettings(true, 3, 16, 2));
+        crew.sync(List.of(one, two));
+        assertEquals(2, crew.agents(1).size());
+        assertEquals(3, crew.agents(2).size());
+        crew.setOwnerSettings(alice, new NpcSettings(false, 2, 16, 2));
+        assertEquals(0, crew.agents(1).size());
+        assertEquals(3, crew.agents(2).size());
+        crew.shutdown();
+    }
+
+    @Test
     void smallJobsGetASingleWorkerAndDisabledNpcsGetNone() {
         FakeFactory factory = new FakeFactory();
         BuildCrewCoordinator crew = new BuildCrewCoordinator(factory, NpcSettings.defaults());

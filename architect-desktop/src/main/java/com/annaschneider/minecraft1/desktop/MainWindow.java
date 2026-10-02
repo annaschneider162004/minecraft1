@@ -629,8 +629,10 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
 
     /** Sends a camera/NPC request without blocking the UI; failures only show up in the log. */
     private void sendCamera(LinkRequest request) {
-        runBusy("Updating camera settings...", client -> client.call(request),
-            result -> showCameraMessage(result.message()));
+        if (connection.isConnected()) {
+            connection.submit(client -> client.call(request),
+                result -> showCameraMessage(result.message()), this::log);
+        }
     }
 
     private void showCameraMessage(String message) {

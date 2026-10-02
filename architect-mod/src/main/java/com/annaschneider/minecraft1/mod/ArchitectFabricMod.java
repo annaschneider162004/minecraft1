@@ -66,6 +66,12 @@ public final class ArchitectFabricMod implements ModInitializer {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             if (cameraCoordinator != null && handler != null && handler.player != null) {
                 cameraCoordinator.forget(handler.player.getUuid());
+                if (runtime != null) {
+                    runtime.bridge().reapplySettings(handler.player.getUuid());
+                }
+                if (crew != null) {
+                    crew.forgetOwner(handler.player.getUuid());
+                }
             }
         });
 
@@ -222,9 +228,23 @@ public final class ArchitectFabricMod implements ModInitializer {
             }
 
             @Override
-            public void applySettings(CameraNpcSettings settings) {
-                var current = crew.settings();
-                crew.setSettings(new com.annaschneider.minecraft1.largebuild.npc.NpcSettings(
+            public String setEnabled(java.util.UUID playerId, boolean enabled) {
+                crew.setOwnerSettings(playerId, crew.settings(playerId).withEnabled(enabled));
+                return enabled ? "Builder NPCs enabled for your builds." : "Builder NPCs disabled for your builds.";
+            }
+
+            @Override
+            public String describe(java.util.UUID playerId) {
+                var current = crew.settings(playerId);
+                return "Builder NPCs " + (current.enabled() ? "enabled" : "disabled")
+                    + ", max " + (current.enabled() ? current.maxWorkers() : 0)
+                    + " per build, " + crew.workerCount() + " worker(s) active globally.";
+            }
+
+            @Override
+            public void applySettings(java.util.UUID playerId, CameraNpcSettings settings) {
+                var current = crew.settings(playerId);
+                crew.setOwnerSettings(playerId, new com.annaschneider.minecraft1.largebuild.npc.NpcSettings(
                     settings.npcEnabled() && settings.maxNpcs() > 0,
                     Math.max(1, settings.maxNpcs()), current.sectionsPerWorker(), current.updateIntervalSections()));
             }

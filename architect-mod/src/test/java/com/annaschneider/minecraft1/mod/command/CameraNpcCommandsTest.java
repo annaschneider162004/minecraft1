@@ -67,7 +67,7 @@ class CameraNpcCommandsTest {
             }
 
             @Override
-            public void applySettings(CameraNpcSettings settings) {
+            public void applySettings(UUID playerId, CameraNpcSettings settings) {
                 receivedCrew = settings;
             }
         });

@@ -76,7 +76,15 @@ public final class ArchitectCommandEngine implements AutoCloseable {
 
         String describe();
 
-        void applySettings(CameraNpcSettings settings);
+        default String setEnabled(UUID playerId, boolean enabled) {
+            return setEnabled(enabled);
+        }
+
+        default String describe(UUID playerId) {
+            return describe();
+        }
+
+        void applySettings(UUID playerId, CameraNpcSettings settings);
     }
 
     public static final Vec3i DEFAULT_ORIGIN = new Vec3i(0, 1, 0);
@@ -164,7 +172,7 @@ public final class ArchitectCommandEngine implements AutoCloseable {
             cameraControl.applySettings(playerId, bounded);
         }
         if (crewControl != null) {
-            crewControl.applySettings(bounded);
+            crewControl.applySettings(playerId, bounded);
         }
         return cameraControl == null && crewControl == null
             ? "Camera and NPC features are unavailable in this runtime; settings remain saved."
@@ -213,7 +221,7 @@ public final class ArchitectCommandEngine implements AutoCloseable {
                 case "cancel" -> handleCancel(playerId, world);
                 case "undo" -> handleUndo(playerId);
                 case "camera" -> handleCamera(playerId, args);
-                case "npc" -> handleNpc(args);
+                case "npc" -> handleNpc(playerId, args);
                 default -> new CommandResult(false, "Unknown subcommand. Use /architect help.");
             };
         } catch (IllegalArgumentException | IllegalStateException | UncheckedIOException ex) {
@@ -484,15 +492,15 @@ public final class ArchitectCommandEngine implements AutoCloseable {
         };
     }
 
-    private CommandResult handleNpc(String[] args) {
+    private CommandResult handleNpc(UUID playerId, String[] args) {
         requireLength(args, 3, "Usage: /architect npc <on|off|status>");
         if (crewControl == null) {
             return new CommandResult(false, "Builder NPCs are not available on this server.");
         }
         return switch (args[2].toLowerCase(Locale.ROOT)) {
-            case "on", "enable", "true" -> new CommandResult(true, crewControl.setEnabled(true));
-            case "off", "disable", "false" -> new CommandResult(true, crewControl.setEnabled(false));
-            case "status" -> new CommandResult(true, crewControl.describe());
+            case "on", "enable", "true" -> new CommandResult(true, crewControl.setEnabled(playerId, true));
+            case "off", "disable", "false" -> new CommandResult(true, crewControl.setEnabled(playerId, false));
+            case "status" -> new CommandResult(true, crewControl.describe(playerId));
             default -> new CommandResult(false, "Usage: /architect npc <on|off|status>");
         };
     }
