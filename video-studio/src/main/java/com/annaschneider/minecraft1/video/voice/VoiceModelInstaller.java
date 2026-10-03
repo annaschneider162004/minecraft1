@@ -20,6 +20,11 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /** Opt-in, bounded downloads; a complete model directory becomes visible in one atomic rename. */
@@ -39,9 +44,12 @@ public final class VoiceModelInstaller {
         "cdn-lfs-us-1.huggingface.co", "cdn-lfs-eu-1.huggingface.co", "cdn-lfs.hf.co",
         "cdn-lfs-us-1.hf.co", "cdn-lfs-eu-1.hf.co", "cas-bridge.xethub.hf.co");
     private static final long MAX_MODEL_BYTES = 2L * 1024 * 1024 * 1024;
+    private static final Duration TRANSFER_TIMEOUT = Duration.ofMinutes(10);
     private final Transport transport;
+    private final Duration transferTimeout;
 
     public VoiceModelInstaller() {
+        transferTimeout = TRANSFER_TIMEOUT;
         HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER)
             .connectTimeout(Duration.ofSeconds(20)).build();
         transport = uri -> {
@@ -54,7 +62,15 @@ public final class VoiceModelInstaller {
     }
 
     /** Tests inject transport, but all URL/path/integrity checks still apply. */
-    public VoiceModelInstaller(Transport transport) { this.transport = java.util.Objects.requireNonNull(transport); }
+    public VoiceModelInstaller(Transport transport) { this(transport, TRANSFER_TIMEOUT); }
+
+    public VoiceModelInstaller(Transport transport, Duration transferTimeout) {
+        this.transport = java.util.Objects.requireNonNull(transport);
+        this.transferTimeout = java.util.Objects.requireNonNull(transferTimeout);
+        if (transferTimeout.isZero() || transferTimeout.isNegative() || transferTimeout.compareTo(TRANSFER_TIMEOUT) > 0) {
+            throw new IllegalArgumentException("Body transfer timeout must be positive and at most ten minutes.");
+        }
+    }
 
     public Path install(VoiceCatalog.Model model, Path folder, boolean licenseAccepted, Consumer<Progress> progress)
         throws IOException, InterruptedException {
@@ -184,9 +200,27 @@ public final class VoiceModelInstaller {
 
     private void download(VoiceCatalog.Asset asset, Path partial, Consumer<Long> progress)
         throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + transferTimeout.toNanos();
+        ExecutorService reader = Executors.newSingleThreadExecutor(task -> {
+            Thread thread = new Thread(task, "voice-download-reader");
+            thread.setDaemon(true);
+            return thread;
+        });
+        try {
+            download(asset, partial, progress, reader, deadline);
+        } finally {
+            reader.shutdownNow();
+        }
+    }
+
+    private void download(VoiceCatalog.Asset asset, Path partial, Consumer<Long> progress, ExecutorService reader,
+                          long deadline) throws IOException, InterruptedException {
         URI uri = asset.url();
         for (int redirects = 0; redirects <= 5; redirects++) {
             checkCancelled();
+            if (deadline - System.nanoTime() <= 0) {
+                throw new IOException("Model body download timed out; nothing was installed.");
+            }
             validateUrl(uri);
             try (Response response = transport.open(uri)) {
                 if (Set.of(301, 302, 303, 307, 308).contains(response.status())) {
@@ -208,7 +242,7 @@ public final class VoiceModelInstaller {
                 byte[] buffer = new byte[64 * 1024];
                 try (var output = Files.newOutputStream(partial, StandardOpenOption.CREATE_NEW)) {
                     int read;
-                    while ((read = response.body().read(buffer)) != -1) {
+                    while ((read = readBody(response.body(), buffer, reader, deadline)) != -1) {
                         checkCancelled();
                         count += read;
                         if (count > asset.sizeBytes()) {
@@ -226,6 +260,34 @@ public final class VoiceModelInstaller {
             }
         }
         throw new IOException("Model redirect limit exceeded.");
+    }
+
+    private static int readBody(InputStream input, byte[] buffer, ExecutorService reader, long deadline)
+        throws IOException, InterruptedException {
+        // JDK 17 HTTP body streams can swallow reader interrupts. Wait interruptibly on a separate read,
+        // then close the response in download() on cancellation/timeout to unblock the actual stream.
+        var read = reader.submit(() -> input.read(buffer));
+        try {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                throw new IOException("Model body download timed out; nothing was installed.");
+            }
+            return read.get(remaining, TimeUnit.NANOSECONDS);
+        } catch (TimeoutException ex) {
+            throw new IOException("Model body download timed out; nothing was installed.", ex);
+        } catch (ExecutionException ex) {
+            if (ex.getCause() instanceof IOException failure) {
+                throw failure;
+            }
+            throw new IOException("Could not read model download body.", ex.getCause());
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw ex;
+        } finally {
+            if (!read.isDone()) {
+                read.cancel(true);
+            }
+        }
     }
 
     private static MessageDigest digest(String algorithm) throws IOException {

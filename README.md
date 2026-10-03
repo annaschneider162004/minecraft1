@@ -741,7 +741,8 @@ Install just the models you want: select an entry, read the source/model card, l
 accept them before downloading. The manager shows total bytes, progress, cancel and retry. A multi-speaker model is
 downloaded **once**, shared by every speaker; selecting another speaker does not duplicate its `.onnx`. Both model and
 config (and the model card when supplied) are staged below `.voice-downloads`, verified and atomically renamed into a
-model sub-folder. Failed/cancelled downloads are removed. Existing files are never overwritten: if a copy is damaged
+model sub-folder. Body transfers have a ten-minute deadline per artifact; cancel/timeout closes the active response
+stream, including when the HTTP reader ignores interrupts. Failed/cancelled downloads are removed. Existing files are never overwritten: if a copy is damaged
 or incomplete, back it up and rename/remove it before retrying. Temporary download space plus the installed model's
 size must fit on the voices drive. Crashed-process staging directories can be removed from `.voice-downloads` while
 no download is running; `.voice-download-locks` contains only coordination files.

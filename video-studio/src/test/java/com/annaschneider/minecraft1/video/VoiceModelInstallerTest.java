@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -163,6 +164,53 @@ class VoiceModelInstallerTest {
     }
 
     @Test
+    void stalledBodyHasDeadlineAndIsClosedBeforeRetry(@TempDir Path root) throws Exception {
+        StalledBody body = new StalledBody();
+        var installer = new VoiceModelInstaller(uri -> new VoiceModelInstaller.Response(200, null, -1, body),
+            Duration.ofMillis(100));
+        IOException failure = assertThrows(IOException.class, () -> installer.install(model(), root, true, p -> { }));
+        assertTrue(failure.getMessage().contains("timed out"), failure.getMessage());
+        assertEquals(0, body.closed.getCount(), "Timeout must close the body, not just interrupt its reader");
+        assertNoPartials(root);
+        assertEquals(root.resolve(ID), new VoiceModelInstaller(VoiceModelInstallerTest::ok)
+            .install(model(), root, true, p -> { }));
+    }
+
+    @Test
+    void interruptClosesBodyEvenWhenStreamSwallowsInterrupts(@TempDir Path root) throws Exception {
+        StalledBody body = new StalledBody();
+        var installer = new VoiceModelInstaller(uri -> new VoiceModelInstaller.Response(200, null, -1, body));
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        var owner = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        var interrupted = new java.util.concurrent.atomic.AtomicBoolean();
+        VoiceCatalog.Model model = model();
+        try {
+            var future = executor.submit(() -> {
+                owner.set(Thread.currentThread());
+                try {
+                    return installer.install(model, root, true, p -> { });
+                } catch (InterruptedException ex) {
+                    interrupted.set(Thread.currentThread().isInterrupted());
+                    throw ex;
+                }
+            });
+            assertTrue(body.entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            owner.get().interrupt();
+            var failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> future.get(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertInstanceOf(InterruptedException.class, failure.getCause());
+            assertTrue(interrupted.get(), "Cancellation must preserve the installer thread's interrupt status");
+            assertTrue(body.closed.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            assertNoPartials(root);
+            assertEquals(root.resolve(ID), new VoiceModelInstaller(VoiceModelInstallerTest::ok)
+                .install(model, root, true, p -> { }));
+        } finally {
+            body.close();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void rejectsHashSizeAndInvalidConfigBeforePublication(@TempDir Path root) throws Exception {
         for (byte[] bytes : List.of(new byte[] {9, 9, 9, 9}, new byte[] {1}, new byte[] {1, 2, 3, 4, 5})) {
             var installer = new VoiceModelInstaller(uri -> new VoiceModelInstaller.Response(200, null, -1,
@@ -267,6 +315,32 @@ class VoiceModelInstallerTest {
     private static VoiceModelInstaller.Response ok(URI uri) {
         byte[] bytes = uri.getPath().endsWith(".onnx") ? MODEL : CONFIG;
         return new VoiceModelInstaller.Response(200, null, bytes.length, new ByteArrayInputStream(bytes));
+    }
+
+    /** Mimics JDK 17 HTTP body reads that consume interrupts but unblock when the stream is closed. */
+    private static final class StalledBody extends InputStream {
+        final java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch closed = new java.util.concurrent.CountDownLatch(1);
+
+        @Override public int read() throws IOException {
+            return read(new byte[1], 0, 1);
+        }
+
+        @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+            entered.countDown();
+            while (closed.getCount() != 0) {
+                try {
+                    closed.await();
+                } catch (InterruptedException ignored) {
+                    // Reproduce the underlying HTTP stream, not a correctly interruptible test fake.
+                }
+            }
+            throw new IOException("Stream closed");
+        }
+
+        @Override public void close() {
+            closed.countDown();
+        }
     }
 
     private static void assertNoPartials(Path folder) throws IOException {
