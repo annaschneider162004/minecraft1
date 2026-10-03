@@ -2,7 +2,6 @@ package com.annaschneider.minecraft1.link;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonParseException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -39,7 +38,17 @@ public final class LinkCodec {
                 throw new LinkProtocolException("Empty message.");
             }
             return value;
-        } catch (JsonParseException | IllegalArgumentException ex) {
+        } catch (RuntimeException ex) {
+            Throwable cause = ex;
+            for (int depth = 0; cause != null && depth < 16; depth++, cause = cause.getCause()) {
+                if (cause instanceof LinkProtocolException protocol) {
+                    String message = protocol.getMessage();
+                    if (message != null && !message.isBlank() && message.length() <= 256
+                        && message.chars().noneMatch(Character::isISOControl)) {
+                        throw new LinkProtocolException(message);
+                    }
+                }
+            }
             throw new LinkProtocolException("Malformed message: expected one JSON object per line.");
         }
     }

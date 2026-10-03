@@ -2,6 +2,8 @@ package com.annaschneider.minecraft1.mod.link;
 
 import com.annaschneider.minecraft1.domain.Vec3i;
 import com.annaschneider.minecraft1.largebuild.engine.BuildSettings;
+import com.annaschneider.minecraft1.largebuild.scene.SceneCompiler;
+import com.annaschneider.minecraft1.link.PlanGenerationOptions;
 import com.annaschneider.minecraft1.link.BuildMode;
 import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.largebuild.camera.CameraMode;
@@ -28,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -227,15 +230,44 @@ class DesktopBridgeTest {
     }
 
     @Test
-    void promptBecomesKeywordPlan() throws Exception {
+    void promptPreservesInputAndBecomesSeededLayoutPlan() throws Exception {
         try (LinkClient client = connect(null)) {
-            LinkMessage plan = client.call(LinkRequest.planFromPrompt("my-castle", "A white Castle with a waterfall!", 1));
+            String prompt = "A medieval linear town with a waterfall! No floating islands, no central palace.";
+            LinkMessage plan = client.call(LinkRequest.planFromPrompt("my-town", prompt, 1,
+                new PlanGenerationOptions("linear", "medieval", -42L, Map.of())));
             assertTrue(plan.isOk(), plan.message());
-            assertTrue(plan.message().contains("placeholder:a-white-castle-with-a-waterfall"), plan.message());
+            assertTrue(plan.message().contains("seed -42"), plan.message());
             assertTrue(plan.plan().regions().stream().map(RegionBox::type).anyMatch("waterfall"::equals));
+            assertFalse(plan.plan().regions().stream().map(RegionBox::type).anyMatch("island"::equals));
+            assertFalse(plan.plan().regions().stream().map(RegionBox::type).anyMatch("palace"::equals));
+            assertFalse(plan.plan().regions().stream().map(RegionBox::type).anyMatch("clearance"::equals));
+            var saved = engine.loadPlan("my-town");
+            assertEquals(-42L, saved.seed());
+            assertEquals("medieval", saved.style());
+            assertEquals(prompt, saved.metadata().prompt());
+            assertEquals(plan.plan(), client.call(LinkRequest.preview(BuildMode.PLAN, "my-town")).plan());
+            LinkMessage build = client.call(LinkRequest.build(BuildMode.PLAN, "my-town"));
+            assertTrue(build.isOk(), build.message());
+            assertEquals(new SceneCompiler().compile(saved, engine.queue().settings().maxSectionsPerJob()).sectionCount(),
+                build.job().unitsTotal());
+            assertEquals(saved, engine.loadPlan("my-town"), "build must not regenerate the plan");
+            assertTrue(client.call(LinkRequest.of(RequestType.CANCEL)).isOk());
             LinkMessage missing = client.call(LinkRequest.preview(BuildMode.PLAN, "nope"));
             assertFalse(missing.isOk());
             assertTrue(missing.message().contains("No saved plan 'nope'"), missing.message());
+        }
+    }
+
+    @Test
+    void invalidGenerationDoesNotReplaceSavedPlan() throws Exception {
+        try (LinkClient client = connect(null)) {
+            var options = new PlanGenerationOptions("ring", "desert", Long.MIN_VALUE, Map.of());
+            assertTrue(client.call(LinkRequest.planFromPrompt("safe", "desert market", 1, options)).isOk());
+            var saved = engine.loadPlan("safe");
+            LinkMessage invalid = client.call(LinkRequest.planFromPrompt("safe", "no floating islands", 1,
+                new PlanGenerationOptions("legacy", "fantasy", 1L, Map.of())));
+            assertFalse(invalid.isOk(), invalid.message());
+            assertEquals(saved, engine.loadPlan("safe"));
         }
     }
 

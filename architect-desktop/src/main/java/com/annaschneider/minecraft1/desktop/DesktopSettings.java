@@ -9,6 +9,7 @@ import java.util.prefs.Preferences;
 final class DesktopSettings {
     private static final String LINK_FILE = "linkFile";
     private static final String PLAYER = "player";
+    private static final String LAYOUT_WEIGHTS = "layoutWeights";
 
     private final Preferences preferences;
     private Path overrideLinkFile;
@@ -72,5 +73,15 @@ final class DesktopSettings {
         } else {
             preferences.put(PLAYER, player.trim());
         }
+    }
+
+    String layoutWeights() {
+        return preferences.get(LAYOUT_WEIGHTS, "");
+    }
+
+    /** Comma-separated layout=weight entries; empty uses built-in prompt-aware weights. */
+    void setLayoutWeights(String text) {
+        PlanGenerationModel.parseWeights(text);
+        preferences.put(LAYOUT_WEIGHTS, text.trim());
     }
 }

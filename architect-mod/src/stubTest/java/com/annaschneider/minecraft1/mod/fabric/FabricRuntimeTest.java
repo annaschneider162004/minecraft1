@@ -1,6 +1,7 @@
 package com.annaschneider.minecraft1.mod.fabric;
 
 import com.annaschneider.minecraft1.domain.Vec3i;
+import com.annaschneider.minecraft1.largebuild.blueprint.Bounds;
 import com.annaschneider.minecraft1.largebuild.engine.JobKind;
 import com.annaschneider.minecraft1.largebuild.engine.JobProgress;
 import com.annaschneider.minecraft1.largebuild.engine.JobState;
@@ -65,6 +66,8 @@ public class FabricRuntimeTest {
         Vec3i outsideBorder = new Vec3i(40_000_000, 64, 0);
         assertThrows(IllegalArgumentException.class, () -> blockWorld.setBlock(outsideBorder, "minecraft:stone"));
         assertEquals("minecraft:void_air", blockWorld.getBlock(outsideBorder));
+        assertTrue(blockWorld.withinBorder(new Bounds(-10, 0, -10, 10, 10, 10)));
+        assertFalse(blockWorld.withinBorder(new Bounds(0, 0, 0, 40_000_000, 10, 10)));
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.annaschneider.minecraft1.mod.runtime;
 
 import com.annaschneider.minecraft1.domain.Vec3i;
+import com.annaschneider.minecraft1.largebuild.blueprint.Bounds;
 import com.annaschneider.minecraft1.largebuild.engine.WorldAccess;
 
 /**
@@ -31,6 +32,11 @@ public final class BlockWorldAccess implements WorldAccess {
     @Override
     public int maxY() {
         return world.maxY();
+    }
+
+    @Override
+    public boolean withinBorder(Bounds bounds) {
+        return world.withinBorder(bounds);
     }
 
     @Override

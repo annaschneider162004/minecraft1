@@ -1,6 +1,7 @@
 package com.annaschneider.minecraft1.mod.fabric;
 
 import com.annaschneider.minecraft1.domain.Vec3i;
+import com.annaschneider.minecraft1.largebuild.blueprint.Bounds;
 import com.annaschneider.minecraft1.mod.runtime.BlockWorld;
 import net.minecraft.block.Block;
 import net.minecraft.registry.Registries;
@@ -86,6 +87,15 @@ public final class FabricBlockWorld implements BlockWorld {
     @Override
     public int maxY() {
         return world.getTopY() - 1;
+    }
+
+    @Override
+    public boolean withinBorder(Bounds bounds) {
+        var border = world.getWorldBorder();
+        return border.contains(new BlockPos(bounds.minX(), bounds.minY(), bounds.minZ()))
+            && border.contains(new BlockPos(bounds.minX(), bounds.minY(), bounds.maxZ()))
+            && border.contains(new BlockPos(bounds.maxX(), bounds.minY(), bounds.minZ()))
+            && border.contains(new BlockPos(bounds.maxX(), bounds.minY(), bounds.maxZ()));
     }
 
     @Override

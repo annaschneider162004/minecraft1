@@ -15,7 +15,19 @@ public enum RegionType {
     PATH("path"),
     GARDEN("garden"),
     CHERRY_TREES("cherry"),
-    CLOUDS("clouds");
+    CLOUDS("clouds"),
+    FOUNDATION("foundation"),
+    BUILDING("building"),
+    TOWER("tower"),
+    WALL("wall"),
+    ROAD("road"),
+    STAIR("stair"),
+    ROCK("rock"),
+    LEDGE("ledge"),
+    PLANTING("planting"),
+    GROVE("grove"),
+    POOL("pool"),
+    CLEARANCE("clearance");
 
     private final String id;
 

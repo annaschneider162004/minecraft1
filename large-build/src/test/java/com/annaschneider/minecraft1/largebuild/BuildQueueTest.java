@@ -118,6 +118,29 @@ class BuildQueueTest {
     }
 
     @Test
+    void validatesCompleteTranslatedFootprintAgainstActualWorldBorderBeforeQueueing() {
+        Bounds[] checked = new Bounds[1];
+        MapWorld world = new MapWorld() {
+            @Override public boolean withinBorder(Bounds target) {
+                checked[0] = target;
+                return target.minX() >= -10 && target.maxX() <= 10 && target.minZ() >= -10 && target.maxZ() <= 10;
+            }
+        };
+        BuildQueue queue = new BuildQueue(settings(4096));
+        UUID owner = UUID.randomUUID();
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+            () -> queue.submit(owner, cube(4, "stone"), new Vec3i(8, 64, -2), world));
+        assertTrue(failure.getMessage().contains("world border"));
+        assertEquals(new Bounds(8, 64, -2, 11, 67, 1), checked[0]);
+        assertTrue(queue.snapshot().isEmpty());
+        assertEquals(0, world.writes);
+        queue.submit(owner, cube(4, "stone"), new Vec3i(7, 64, -2), world);
+        assertEquals(new Bounds(7, 64, -2, 10, 67, 1), checked[0]);
+        runUntilIdle(queue, world, 100);
+        assertEquals(64, world.writes);
+    }
+
+    @Test
     void undoRestoresPreviousBlocksWithJournalSpilledToDisk(@TempDir Path journals) throws Exception {
         BuildSettings settings = BuildSettings.defaults().withBlocksPerTick(4_096).withJournal(1_024, journals);
         BuildQueue queue = new BuildQueue(settings);

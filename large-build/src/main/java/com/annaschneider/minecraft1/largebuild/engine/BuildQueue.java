@@ -59,7 +59,8 @@ public final class BuildQueue {
                 + " but the world allows y=" + world.minY() + ".." + world.maxY() + ". Move the origin up or down.");
         }
         if (Math.abs((long) target.minX()) > MAX_HORIZONTAL || Math.abs((long) target.maxX()) > MAX_HORIZONTAL
-            || Math.abs((long) target.minZ()) > MAX_HORIZONTAL || Math.abs((long) target.maxZ()) > MAX_HORIZONTAL) {
+            || Math.abs((long) target.minZ()) > MAX_HORIZONTAL || Math.abs((long) target.maxZ()) > MAX_HORIZONTAL
+            || !world.withinBorder(target)) {
             throw new IllegalArgumentException("Build would extend beyond the world border.");
         }
         UndoJournal journal = new UndoJournal(settings.journalDirectory(), settings.journalMemoryEntries());

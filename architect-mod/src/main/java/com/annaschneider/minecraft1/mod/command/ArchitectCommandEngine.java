@@ -24,6 +24,7 @@ import com.annaschneider.minecraft1.largebuild.engine.JobProgress;
 import com.annaschneider.minecraft1.largebuild.image.ImageReferenceResolver;
 import com.annaschneider.minecraft1.largebuild.image.ImageToBlueprintPipeline;
 import com.annaschneider.minecraft1.largebuild.image.PlanOptions;
+import com.annaschneider.minecraft1.largebuild.image.MultiLayoutScenePlanner;
 import com.annaschneider.minecraft1.largebuild.persistence.BlueprintStore;
 import com.annaschneider.minecraft1.largebuild.persistence.ScenePlanStore;
 import com.annaschneider.minecraft1.largebuild.persistence.StoredBlueprint;
@@ -182,6 +183,19 @@ public final class ArchitectCommandEngine implements AutoCloseable {
     /** Loads a saved scene plan (throws {@link IllegalArgumentException} with a user-facing message if missing). */
     public ScenePlan loadPlan(String planId) {
         return plans.load(planId);
+    }
+
+    /** Creates and validates geometry once; preview, loading and building never regenerate it. */
+    public ScenePlan createTextPlan(UUID playerId, String prompt, PlanOptions options) {
+        if (options.scale() > ArchitectConfig.MAX_IMAGE_SCALE) {
+            throw new IllegalArgumentException("scale must be in range 1.." + ArchitectConfig.MAX_IMAGE_SCALE + ".");
+        }
+        ScenePlan plan = new MultiLayoutScenePlanner().planText(prompt, options);
+        ProceduralBlueprint blueprint = compiler.compile(plan, queue.settings().maxSectionsPerJob());
+        BlockCatalog.requireSupported(blueprint.palette().blockIds());
+        plans.save(plan);
+        loadedPlans.put(playerId, plan.id());
+        return plan;
     }
 
     public CommandResult execute(UUID playerId, BlockWorld world, String rawCommand) {
@@ -556,6 +570,7 @@ public final class ArchitectCommandEngine implements AutoCloseable {
             case GARDEN -> region(type, 0, diameter, 2, diameter, rotation, mirror);
             case CHERRY_TREES -> region(type, 0, diameter, 10, diameter, rotation, mirror);
             case CLOUDS -> new SceneRegion("clouds", type, -size / 2, 0, -size / 2, size, 4, size, rotation, mirror, 7L);
+            default -> throw new IllegalArgumentException("Use a text layout plan for structural region '" + type.id() + "'.");
         };
     }
 
@@ -573,6 +588,7 @@ public final class ArchitectCommandEngine implements AutoCloseable {
             case GARDEN -> 24;
             case CHERRY_TREES -> 32;
             case CLOUDS -> 256;
+            default -> throw new IllegalArgumentException("Use a text layout plan for structural region '" + type.id() + "'.");
         };
     }
 

@@ -2,6 +2,10 @@ package com.annaschneider.minecraft1.mod.command;
 
 import com.annaschneider.minecraft1.domain.Vec3i;
 import com.annaschneider.minecraft1.largebuild.engine.BuildSettings;
+import com.annaschneider.minecraft1.largebuild.blueprint.Bounds;
+import com.annaschneider.minecraft1.largebuild.image.LayoutType;
+import com.annaschneider.minecraft1.largebuild.image.PlanOptions;
+import com.annaschneider.minecraft1.mod.runtime.BlockWorld;
 import com.annaschneider.minecraft1.mod.runtime.InMemoryBlockWorld;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,11 +15,13 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ArchitectLargeBuildCommandsTest {
     @TempDir
@@ -136,5 +142,49 @@ class ArchitectLargeBuildCommandsTest {
         tickUntilIdle();
         assertTrue(run("/architect progress").message().contains("completed"));
         assertTrue(run("/architect image list").message().contains("grove"));
+    }
+
+    @Test
+    void textLayoutBuildCompletesAndUndoRestoresWorld() {
+        var plan = engine.createTextPlan(player, "industrial grid town, no central palace", new PlanOptions(
+            "blocks", 1, LayoutType.GRID, "industrial", 123L, Map.of()));
+        assertTrue(run("/architect image preview blocks").success());
+        assertTrue(run("/architect image build blocks").success());
+        tickUntilIdle();
+        assertTrue(run("/architect progress").message().contains("completed"));
+        assertEquals(plan, engine.loadPlan("blocks"));
+        assertTrue(run("/architect undo").success());
+        tickUntilIdle();
+        assertEquals("minecraft:air", world.getBlock(new Vec3i(0, 64, -16)));
+    }
+
+    @Test
+    void validatesEntireLayoutBoundsBeforeQueuing() {
+        engine.createTextPlan(player, "cliff fortress", new PlanOptions(
+            "cliff", 2, LayoutType.CLIFF, "medieval", 7L, Map.of()));
+        CommandResult height = engine.execute(player, world, new Vec3i(0, 310, 0), "/architect image build cliff");
+        assertFalse(height.success());
+        assertTrue(height.message().contains("world allows"), height.message());
+        assertTrue(engine.queue().progress(player).isEmpty());
+        BlockWorld restricted = new BlockWorld() {
+            public String getBlock(Vec3i position) { return "minecraft:air"; }
+            public void setBlock(Vec3i position, String blockId) { throw new AssertionError("must reject before placement"); }
+            public boolean withinBorder(Bounds bounds) { return false; }
+        };
+        CommandResult border = engine.execute(player, restricted, new Vec3i(0, 64, 0), "/architect image build cliff");
+        assertFalse(border.success());
+        assertTrue(border.message().contains("border"), border.message());
+        assertTrue(engine.queue().progress(player).isEmpty());
+    }
+
+    @Test
+    void sectionBudgetFailureDoesNotSaveOrLoadPlan() {
+        BuildSettings tiny = new BuildSettings(64, 8, 0, 16, 2, 1L, 64, dataRoot.resolve("tiny-journals"));
+        try (var limited = new ArchitectCommandEngine(dataRoot.resolve("tiny"), tiny)) {
+            assertThrows(IllegalArgumentException.class, () -> limited.createTextPlan(player, "linear city",
+                new PlanOptions("oversized", 1, LayoutType.LINEAR, "neutral", 1L, Map.of())));
+            assertFalse(Files.exists(dataRoot.resolve("tiny/plans/oversized.json")));
+            assertFalse(limited.execute(player, world, "/architect image preview").success());
+        }
     }
 }
