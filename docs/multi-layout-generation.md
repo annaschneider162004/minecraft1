@@ -299,10 +299,14 @@ Fabric jar or in-game visual validation is claimed for this environment.
 | Full `:architect-mod:test` module | 58 tests passed, including Fabric-stub tests |
 | Existing headless link demo | Six explicit layouts created/saved/previewed; build/pause/resume/cancel reused saved geometry |
 | Secret scan | No secrets detected in changed files |
+| CodeQL Java security scan | Completed with zero alerts |
+| Independent read-only code review | Complete patch reviewed; no significant issues found |
 | Real Fabric JDK 25 compilation | Blocked before compilation by Fabric Maven DNS, as described above |
 
 No skipped layout test, weakened unrelated assertion, or successful real-game run is claimed. The initial integration
 compile gap and waterfall assertion failure were corrected; subsequent full mod tests passed.
+The bundled code-review invocation could not run because its configured model was unavailable, despite
+its success-shaped response. A separate read-only review of the complete patch completed with no significant findings.
 
 ## Tóm tắt tiếng Việt
 
