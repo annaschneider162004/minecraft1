@@ -83,7 +83,8 @@ public final class VoiceInstaller {
         boolean installed = false;
         try {
             Files.createDirectories(voicesFolder);
-            if (Files.exists(target) || Files.exists(voicesFolder.resolve(voice.modelId() + VoicePackRegistry.MODEL_EXTENSION))) {
+            if (Files.exists(target) || registry.discover(voicesFolder).voices().stream()
+                    .anyMatch(pack -> pack.id().equals(voice.modelId()))) {
                 throw new VoiceInstallException("Voice " + voice.modelId() + " is already in the voices folder (" + target
                     + "). Click Refresh to list it.");
             }

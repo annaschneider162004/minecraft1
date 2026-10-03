@@ -156,7 +156,7 @@ public final class VoiceCatalog {
         return source;
     }
 
-    /** One line for the log, e.g. {@code Voice catalog: 2075 entries from 43 models (3 installed, 2072 verified downloadable)}. */
+    /** One line for the log, e.g. {@code Voice catalog: 2075 entries from 42 models (3 installed, 2072 verified downloadable)}. */
     public String summary() {
         return String.format(Locale.ROOT, "Voice catalog: %d entries from %d models (%d installed, %d verified downloadable)",
             size(), modelCount(), installedCount(), downloadableCount());

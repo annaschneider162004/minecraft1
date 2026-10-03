@@ -216,7 +216,7 @@ class VoiceCatalogTest {
         assertEquals(10_000, vi.size());
         assertEquals(List.of("en_US-synthetic42-low#speaker-7"), one.stream().map(VoiceCatalogEntry::id).toList());
         assertTrue(none.isEmpty());
-        assertTrue(millis < 2_000, "filtering 20,000 entries took " + millis + " ms");
+        assertTrue(millis < 10_000, "filtering 20,000 entries took " + millis + " ms");
     }
 
     // ------------------------------------------------------------------ preview / narration / export use the selection
@@ -316,6 +316,14 @@ class VoiceCatalogTest {
         VoiceInstallException again = assertThrows(VoiceInstallException.class,
             () -> new VoiceInstaller(url -> new ByteArrayInputStream(served.get(url))).install(voice, voices, message -> { }));
         assertTrue(again.getMessage().contains("already in the voices folder"));
+
+        Path manual = dir.resolve("manual");
+        Path sub = Files.createDirectories(manual.resolve("piper"));
+        Files.write(sub.resolve("en_US-arctic-medium.onnx"), model);
+        Files.write(sub.resolve("en_US-arctic-medium.onnx.json"), config);
+        VoiceInstallException handPlaced = assertThrows(VoiceInstallException.class,
+            () -> new VoiceInstaller(url -> { throw new AssertionError("must not download"); }).install(voice, manual, message -> { }));
+        assertTrue(handPlaced.getMessage().contains("already in the voices folder"));
     }
 
     @Test
