@@ -83,12 +83,12 @@ class VoiceCloningTest {
     void rejectsWrongFormatShortLongOversizedCorruptAndTruncatedSamples() throws Exception {
         Path shortSample = TestSupport.writeWav(dir.resolve("short.wav"), 5.9);
         assertTrue(assertThrows(NarrationException.class, () -> ClonedVoiceProfiles.validateSample(shortSample))
-            .getMessage().contains("6 and 60"));
+            .getMessage().contains("6 đến 60 giây"));
         Path longSample = TestSupport.writeWav(dir.resolve("long.wav"), 60.1);
         assertThrows(NarrationException.class, () -> ClonedVoiceProfiles.validateSample(longSample));
         Path mp3 = Files.writeString(dir.resolve("sample.mp3"), "not audio");
         assertTrue(assertThrows(NarrationException.class, () -> ClonedVoiceProfiles.validateSample(mp3))
-            .getMessage().contains("Unsupported"));
+            .getMessage().contains("không được hỗ trợ"));
         Path corrupt = Files.write(dir.resolve("corrupt.wav"), new byte[100]);
         assertThrows(NarrationException.class, () -> ClonedVoiceProfiles.validateSample(corrupt));
         Path oversized = dir.resolve("huge.wav");
@@ -102,9 +102,20 @@ class VoiceCloningTest {
             file.setLength(1000);
         }
         assertTrue(assertThrows(NarrationException.class, () -> ClonedVoiceProfiles.validateSample(truncated))
-            .getMessage().contains("truncated"));
+            .getMessage().contains("cắt cụt"));
         ClonedVoiceProfiles.validateSample(TestSupport.writeWav(dir.resolve("minimum.wav"), 6));
         ClonedVoiceProfiles.validateSample(TestSupport.writeWav(dir.resolve("maximum.wav"), 60));
+    }
+
+    @Test
+    void sampleHelpAndBackendLimitAreVietnameseAndDoNotTreatAudioAsAPack() throws Exception {
+        Path mp3 = Files.writeString(dir.resolve("not-a-pack.mp3"), "sample");
+        String message = assertThrows(NarrationException.class, () -> ClonedVoiceProfiles.validateSample(mp3)).getMessage();
+        assertTrue(message.contains("WAV PCM"));
+        assertTrue(message.contains("không phải gói giọng .onnx"));
+        assertTrue(ClonedVoiceProfiles.CHECKING.contains("Đang kiểm tra"));
+        assertTrue(ClonedVoiceProfiles.FAILED.contains("thất bại"));
+        assertTrue(XttsTtsEngine.UNAVAILABLE.contains("chỉ tạo giọng đọc tiếng Anh"));
     }
 
     @Test

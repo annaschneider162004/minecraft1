@@ -22,6 +22,8 @@ import com.annaschneider.minecraft1.video.voice.VoicePackRegistry;
 import com.annaschneider.minecraft1.video.voice.ClonedVoiceProfiles;
 import com.annaschneider.minecraft1.video.voice.VoicePack;
 import com.annaschneider.minecraft1.video.voice.XttsTtsEngine;
+import com.annaschneider.minecraft1.video.voice.LocalVoicePackImporter;
+import com.annaschneider.minecraft1.video.voice.VoiceInstallException;
 
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -65,7 +67,12 @@ final class VideoStudio {
     }
 
     Narrator narrator() {
-        return new Narrator(List.of(new PiperTtsEngine(piper().orElse(null), runner), cloningEngine()));
+        return new Narrator(List.of(new PiperTtsEngine(piper().orElse(null), runner), cloningEngine()),
+            settings.narrationAudioOptions(), this::ffmpeg);
+    }
+
+    VoicePack importVoicePack(Path model, Path config, String name, String description) throws VoiceInstallException {
+        return new LocalVoicePackImporter().importPack(model, config, settings.voicesFolder(), name, description);
     }
 
     XttsTtsEngine cloningEngine() {
@@ -134,18 +141,18 @@ final class VideoStudio {
     /** One line per optional dependency, for the log and the Tools dialog. */
     List<String> diagnostics(VoiceDiscovery voices) {
         List<String> lines = new ArrayList<>();
-        lines.add(ffmpeg().map(tool -> "FFmpeg: " + tool.executable()).orElse("FFmpeg: NOT FOUND - " + FfmpegTool.MISSING_MESSAGE));
-        lines.add(piper().map(path -> "Piper voice engine: " + path).orElse("Piper voice engine: NOT FOUND - " + PiperTtsEngine.MISSING_MESSAGE));
-        lines.add(cloningEngine().unavailableReason().orElse("Voice cloning: local XTTS v2 (English)"));
+        lines.add(ffmpeg().map(tool -> "FFmpeg: " + tool.executable()).orElse("FFmpeg: KHÔNG TÌM THẤY — cài FFmpeg hoặc chọn đường dẫn trong Công cụ."));
+        lines.add(piper().map(path -> "Bộ đọc Piper: " + path).orElse("Bộ đọc Piper: KHÔNG TÌM THẤY — cài Piper hoặc chọn đường dẫn trong Công cụ."));
+        lines.add(cloningEngine().unavailableReason().map(reason -> "Nhân bản giọng chưa sẵn sàng: " + reason)
+            .orElse("Nhân bản giọng: XTTS v2 cục bộ (chỉ tiếng Anh)"));
         FootageRecorder recorder = recorder();
-        lines.add(recorder.unavailableReason().map(reason -> "Screen recording: NOT AVAILABLE - " + reason)
-            .orElse("Screen recording: " + recorder.name()));
-        lines.add("Voices folder: " + settings.voicesFolder() + " (" + voices.voices().size() + " voice"
-            + (voices.voices().size() == 1 ? "" : "s") + ")");
+        lines.add(recorder.unavailableReason().map(reason -> "Ghi màn hình: CHƯA SẴN SÀNG — " + reason)
+            .orElse("Ghi màn hình: " + recorder.name()));
+        lines.add("Thư mục giọng: " + settings.voicesFolder() + " (" + voices.voices().size() + " giọng)");
         voices.problems().forEach(problem -> lines.add("  " + problem));
-        lines.add(settings.useLocalAi() ? "Story writer: local AI " + settings.ollamaModel() + " at " + settings.ollamaUrl()
-            + " (built-in templates if it is not running)" : "Story writer: built-in templates (offline)");
-        lines.add("Output folder: " + settings.outputFolder());
+        lines.add(settings.useLocalAi() ? "Viết kịch bản: AI cục bộ " + settings.ollamaModel() + " tại " + settings.ollamaUrl()
+            + " (dùng mẫu có sẵn nếu AI không chạy)" : "Viết kịch bản: mẫu có sẵn (ngoại tuyến)");
+        lines.add("Thư mục đầu ra: " + settings.outputFolder());
         return lines;
     }
 

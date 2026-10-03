@@ -651,8 +651,8 @@ Status labels and order / Nhãn trạng thái và thứ tự:
 | Export failed: &lt;reason&gt; | Xuất video thất bại: &lt;reason&gt; | e.g. *FFmpeg not found*, *Narration backend unavailable*, *Recording failed*, *Narration failed*, *Failed to mux audio and video*; **Retry** starts again |
 
 `Idle → Checking dependencies → Recording + Narration → Waiting for remaining job → Muxing audio and video → Export complete`.
-The recording and narration have their own status lines. Labels follow the story language (Vietnamese prompt →
-Vietnamese labels).
+The recording and narration have their own status lines. Video Studio uses Vietnamese UI/status labels; the selected
+voice still determines the preview language, and the story can be English or Vietnamese.
 
 - If either job fails, the other is cancelled and **no final video** is written; a job that already finished keeps its
   file (`-recording.mp4` / `-narration.wav`) so nothing is lost. Half-written recordings are deleted.
@@ -741,6 +741,61 @@ Check each model's `MODEL_CARD` on Hugging Face for its license before using it 
 A pack is rejected (and listed with the reason in the log / **Tools...**) when the config is missing, the model is empty
 or larger than 2 GB, the JSON is invalid or over 1 MB, the engine is not `piper`, the language or sample rate is invalid,
 the id is already used or the files point outside the voices folder.
+
+#### Nhập gói giọng, thả tệp và clone từ WAV (tiếng Việt)
+
+**Gói giọng không phải âm thanh mẫu.** Piper cần model thật `ten-giong.onnx` và cấu hình khớp
+`ten-giong.onnx.json`. Đổi đuôi WAV/MP3 thành `.onnx`, hoặc chỉ đặt tên cho một bản thu, không tạo ra model TTS.
+Chỉ sử dụng model đáng tin cậy, đúng giấy phép và giọng nói mà bạn có quyền sử dụng.
+
+- **Nhập gói giọng…**: chọn model `.onnx` cùng cấu hình `.onnx.json` khớp tên (nếu chỉ chọn một tệp, tệp còn lại phải
+  ở cạnh nó). Có thể nhập tên hiển thị và mô tả; đây chỉ là thông tin hiển thị, không thay đổi model hay ngôn ngữ.
+  App kiểm tra tên, kích thước, cấu hình và dấu hiệu tệp âm thanh giả dạng model, rồi nhập cả gói vào thư mục giọng
+  đã cấu hình. Gói lỗi không được công bố; gói đã có không bị ghi đè. Kiểm tra cấu trúc không thay thế việc chạy
+  model: bấm **Nghe thử giọng** để xác nhận model tương thích với Piper đã cài.
+- **Thả gói giọng tại đây**: thả cặp model/cấu hình, hoặc một tệp của cặp khi tệp còn lại nằm cùng thư mục.
+  Bạn vẫn xác nhận thao tác nhập và metadata trước khi app chép tệp; không có tải xuống ngầm.
+- **Thả mẫu WAV tại đây / Clone từ mẫu WAV…**: thả một WAV để mở quy trình clone, không nhập WAV như voice pack.
+  Xác nhận quyền sử dụng và đặt tên hồ sơ. Mẫu phải là **WAV PCM 16-bit, mono/stereo, 8–96 kHz, 6–60 giây,
+  tối đa 20 MB**. MP3, tệp hỏng, bản thu quá ngắn/dài hoặc lẫn model và mẫu trong cùng lượt thả bị từ chối.
+  App chưa thu trực tiếp từ micro; hãy thu bằng phần mềm khác rồi chọn/thả WAV.
+- Nhập hoặc clone thành công sẽ tự làm mới danh sách; các gói và hồ sơ cũ vẫn được giữ.
+  **Làm mới** giữ lựa chọn giọng đã lưu. Nếu đang lọc mà không thấy giọng, xóa bộ lọc/từ khóa và chọn
+  trạng thái tất cả hoặc đã cài.
+- **Nghe thử giọng** dùng đúng giọng/người nói đang chọn. Muốn dùng tiếng Việt, nhập một pack Piper tiếng Việt thật;
+  profile clone hiện chỉ đọc tiếng Anh. Trong **Công cụ**, chọn Piper hoặc Coqui `tts` cùng thư mục XTTS v2
+  chứa `model.pth`, `config.json`, `vocab.json`. Không có backend/model thì clone chưa thể chạy.
+- Chọn giọng → **Viết kịch bản** → chỉnh lời đọc → **Xuất video**, hoặc chọn chế độ chỉ thuyết minh/tự động xuất
+  và bấm **Bắt đầu**. Tất cả xử lý giọng đã cài diễn ra trên máy, không gửi mẫu lên dịch vụ đám mây.
+
+**Đoạn đọc mẫu:** thu một người nói tự nhiên, rõ và đều, không nhạc nền/tiếng ồn/echo. Đọc trong 6–60 giây;
+không cần đọc đặc tả kỹ thuật của chức năng import. Một phút không bảo đảm chất lượng clone.
+Với backend clone hiện tại, nên thu **tiếng Anh**, ví dụ:
+
+> Hello, this is my natural speaking voice. Today we are building a small village beside a quiet river.
+> The morning light falls across the wooden houses, and a stone bridge connects the two banks.
+> I will explain each step clearly, from laying the foundations to adding windows, gardens, and warm lights.
+> Some details are simple, while others need patience and careful planning. As the sun goes down,
+> we can walk through the finished village and enjoy the view. Thank you for joining this creative journey.
+
+Đoạn **tiếng Việt** tham khảo để luyện/thu lời thuyết minh (không có nghĩa backend hỗ trợ clone tiếng Việt):
+
+> Xin chào, đây là giọng nói tự nhiên của tôi. Hôm nay chúng ta cùng xây một ngôi làng nhỏ bên dòng sông.
+> Ánh nắng buổi sáng chiếu lên những mái nhà gỗ, còn cây cầu đá nối liền hai bờ.
+> Tôi sẽ giải thích từng bước, từ đặt nền móng đến thêm cửa sổ, khu vườn và những ngọn đèn ấm áp.
+> Có chi tiết rất đơn giản, nhưng cũng có phần cần kiên nhẫn và chuẩn bị cẩn thận.
+> Khi mặt trời lặn, chúng ta đi dạo qua ngôi làng đã hoàn thành và ngắm nhìn thành quả.
+> Cảm ơn bạn đã cùng tôi thực hiện hành trình sáng tạo này.
+
+**Tốc độ / hiệu ứng âm thanh:** chọn tốc độ **0,5×–2,0×** (1× bình thường, dưới 1× chậm hơn, trên 1× nhanh hơn),
+và không hiệu ứng hoặc **vang nhẹ**. Đây là xử lý WAV bằng FFmpeg (`atempo` giữ cao độ, `aecho` tạo vang),
+áp dụng thật cho nghe thử, thuyết minh và âm thanh trong video xuất, không chỉ là nút trang trí.
+Thời lượng lời đọc được tính lại sau xử lý; video dựng theo cảnh có thể dài hơn nếu lời đọc chậm/vang.
+Trong chế độ tự quay, độ dài bản quay vẫn do thời gian quay quyết định.
+Các lựa chọn được lưu cùng thiết lập Video Studio. Tốc độ 1×/không hiệu ứng giữ nguyên hành vi cũ và nghe thử không
+cần FFmpeg; đổi tốc độ hoặc bật vang cần FFmpeg. Chưa có nhạc nền, hiệu ứng sự kiện Minecraft, đổi cao độ
+hay trộn nhiều track. Xuất video thủ công vẫn có thể bỏ lời khi backend lỗi và ghi cảnh báo; chế độ tự động báo lỗi
+thay vì coi như đã tạo lời thành công.
 
 **Clone voice from sample... / Clone voice từ sample...** – optional local XTTS v2 voice cloning:
 

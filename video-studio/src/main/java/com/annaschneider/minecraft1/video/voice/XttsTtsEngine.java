@@ -18,9 +18,9 @@ import java.util.Optional;
 public final class XttsTtsEngine implements TtsEngine {
     public static final String ID = "xtts";
     public static final String ENV_VARIABLE = "ARCHITECT_XTTS";
-    public static final String UNAVAILABLE = "Voice cloning unavailable / Clone voice không khả dụng: "
-        + "choose a Coqui tts executable and a local XTTS v2 model folder in Tools. "
-        + "You can still use Piper voices or export without narration.";
+    public static final String UNAVAILABLE = "Clone giọng không khả dụng (Voice cloning unavailable): "
+        + "chọn chương trình Coqui tts và thư mục model XTTS v2 cục bộ trong Công cụ. "
+        + "Backend hiện chỉ tạo giọng đọc tiếng Anh; vẫn có thể dùng Piper hoặc xuất video không lời.";
     private final Path executable;
     private final Path modelFolder;
     private final ProcessRunner runner;
@@ -55,8 +55,8 @@ public final class XttsTtsEngine implements TtsEngine {
             return speaker;
         }
         if (!"en".equals(selection.language())) {
-            return Optional.of("This cloning backend currently supports English profiles only (voice '" + selection.name()
-                + "' is '" + selection.language() + "').");
+            return Optional.of("Backend clone hiện chỉ hỗ trợ hồ sơ tiếng Anh (English profiles only); giọng '" + selection.name()
+                + "' dùng ngôn ngữ '" + selection.language() + "'.");
         }
         return Optional.empty();
     }
@@ -68,12 +68,12 @@ public final class XttsTtsEngine implements TtsEngine {
             throw new NarrationException(problem.get());
         }
         if (!ID.equals(voice.engine()) || !"en".equals(voice.language())) {
-            throw new NarrationException("This cloning backend currently supports English profiles only.");
+            throw new NarrationException("Backend clone hiện chỉ hỗ trợ hồ sơ tiếng Anh (English profiles only).");
         }
         ClonedVoiceProfiles.validateSample(voice.model());
         String line = text == null ? "" : text.replaceAll("[\\p{Cntrl}\\p{Cf}]", " ").strip();
         if (line.isEmpty()) {
-            throw new NarrationException("Nothing to say: the narration text is empty.");
+            throw new NarrationException("Không có nội dung để đọc: lời thuyết minh đang trống.");
         }
         // XTTS's custom-model CLI expects a checkpoint directory, not the model.pth file.
         List<String> command = List.of(executable.toString(), "--model_path", modelFolder.toAbsolutePath().toString(),
@@ -85,16 +85,16 @@ public final class XttsTtsEngine implements TtsEngine {
             ProcessRunner.Result result = runner.run(command, null, Duration.ofMinutes(10));
             if (!result.ok() || !Files.isRegularFile(output) || Files.size(output) <= 44
                 || Files.size(output) > 100L * 1024 * 1024) {
-                throw new NarrationException("XTTS could not speak with voice '" + voice.name() + "' (exit code "
+                throw new NarrationException("XTTS không thể đọc bằng giọng '" + voice.name() + "' (mã thoát "
                     + result.exitCode() + "): " + result.tail(3));
             }
             correctSampleRate(output);
             WavInfo.seconds(output);
         } catch (IOException | UnsupportedAudioFileException ex) {
-            throw new NarrationException("Voice cloning failed: " + ex.getMessage(), ex);
+            throw new NarrationException("Clone giọng thất bại: " + ex.getMessage(), ex);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            throw new NarrationException("Voice cloning was cancelled", ex);
+            throw new NarrationException("Đã hủy clone giọng", ex);
         }
     }
 
@@ -106,7 +106,7 @@ public final class XttsTtsEngine implements TtsEngine {
                 AudioFormat format = audio.getFormat();
                 if (!AudioFormat.Encoding.PCM_SIGNED.equals(format.getEncoding())
                     || format.getSampleSizeInBits() != 16 || format.getChannels() != 1 || format.isBigEndian()) {
-                    throw new IOException("XTTS produced an unsupported audio format.");
+                    throw new IOException("XTTS tạo định dạng âm thanh không được hỗ trợ.");
                 }
                 AudioFormat rate = new AudioFormat(24000, 16, 1, true, false);
                 try (AudioInputStream fixed = new AudioInputStream(audio, rate, audio.getFrameLength())) {

@@ -2,6 +2,7 @@ package com.annaschneider.minecraft1.video.voice;
 
 import com.annaschneider.minecraft1.video.Scene;
 import com.annaschneider.minecraft1.video.Storyboard;
+import com.annaschneider.minecraft1.video.render.FfmpegTool;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Narration stage: speaks every scene of a storyboard with the chosen voice, one WAV per scene. The voice is a
@@ -20,8 +22,15 @@ import java.util.function.Consumer;
  */
 public final class Narrator {
     private final Map<String, TtsEngine> engines = new LinkedHashMap<>();
+    private final NarrationAudioProcessor audioProcessor;
 
     public Narrator(List<TtsEngine> engines) {
+        this(engines, NarrationAudioOptions.defaults(), Optional::empty);
+    }
+
+    public Narrator(List<TtsEngine> engines, NarrationAudioOptions options,
+                    Supplier<Optional<FfmpegTool>> ffmpeg) {
+        this.audioProcessor = new NarrationAudioProcessor(options, ffmpeg);
         for (TtsEngine engine : engines) {
             this.engines.put(engine.id(), engine);
         }
@@ -40,11 +49,15 @@ public final class Narrator {
     public Optional<String> unavailableReason(VoiceSelection selection) {
         TtsEngine engine = engines.get(selection.engine());
         if (engine == null) {
-            return Optional.of("Voice '" + selection.name() + "' needs the '" + selection.engine()
-                + "' engine, which this app does not have.");
+            return Optional.of("Giọng đọc '" + selection.name() + "' cần bộ máy tổng hợp ('" + selection.engine()
+                + "' engine), nhưng ứng dụng chưa có bộ máy này.");
         }
         Optional<String> missing = engine.unavailableReason();
-        return missing.isPresent() ? missing : engine.unsupportedReason(selection);
+        if (missing.isPresent()) {
+            return missing;
+        }
+        Optional<String> unsupported = engine.unsupportedReason(selection);
+        return unsupported.isPresent() ? unsupported : audioProcessor.unavailableReason();
     }
 
     public List<NarrationClip> narrate(Storyboard storyboard, VoicePack voice, Path folder, Consumer<String> progress)
@@ -60,10 +73,11 @@ public final class Narrator {
             if (scene.narration().isBlank()) {
                 continue;
             }
-            progress.accept(String.format(Locale.ROOT, "Speaking scene %d of %d with %s...", scene.index() + 1,
+            progress.accept(String.format(Locale.ROOT, "Đang đọc cảnh %d/%d bằng giọng %s...", scene.index() + 1,
                 storyboard.scenes().size(), selection.name()));
             Path wav = folder.resolve(String.format(Locale.ROOT, "narration-scene-%02d.wav", scene.index() + 1));
             engine.synthesize(selection, scene.narration(), wav);
+            audioProcessor.process(wav);
             clips.add(new NarrationClip(scene.index(), wav, WavInfo.seconds(wav)));
         }
         return clips;
@@ -78,6 +92,7 @@ public final class Narrator {
     public NarrationClip preview(VoiceSelection selection, String text, Path wav) throws NarrationException {
         String sample = text == null || text.isBlank() ? previewText(selection.storyLanguage()) : text;
         engine(selection).synthesize(selection, sample, wav);
+        audioProcessor.process(wav);
         return new NarrationClip(-1, wav, WavInfo.seconds(wav));
     }
 

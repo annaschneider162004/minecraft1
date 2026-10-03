@@ -4,6 +4,7 @@ import com.annaschneider.minecraft1.video.ExportFlow;
 import com.annaschneider.minecraft1.video.ExportMode;
 import com.annaschneider.minecraft1.video.story.OllamaClient;
 import com.annaschneider.minecraft1.video.voice.VoiceFolders;
+import com.annaschneider.minecraft1.video.voice.NarrationAudioOptions;
 
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -106,6 +107,31 @@ final class VideoStudioSettings {
 
     void setVoiceId(String value) {
         putOrRemove("voiceId", value);
+    }
+
+    double narrationSpeed() {
+        double speed = preferences.getDouble("narrationSpeed", 1.0);
+        return Double.isFinite(speed) ? Math.max(0.5, Math.min(2.0, speed)) : 1.0;
+    }
+
+    void setNarrationSpeed(double speed) {
+        preferences.putDouble("narrationSpeed", Double.isFinite(speed) ? Math.max(0.5, Math.min(2.0, speed)) : 1.0);
+    }
+
+    NarrationAudioOptions.Effect narrationEffect() {
+        try {
+            return NarrationAudioOptions.Effect.valueOf(preferences.get("narrationEffect", "NONE"));
+        } catch (IllegalArgumentException ex) {
+            return NarrationAudioOptions.Effect.NONE;
+        }
+    }
+
+    void setNarrationEffect(NarrationAudioOptions.Effect effect) {
+        preferences.put("narrationEffect", (effect == null ? NarrationAudioOptions.Effect.NONE : effect).name());
+    }
+
+    NarrationAudioOptions narrationAudioOptions() {
+        return new NarrationAudioOptions(narrationSpeed(), narrationEffect());
     }
 
     /** Mode of the Start button; Auto-export when both complete by default. */
