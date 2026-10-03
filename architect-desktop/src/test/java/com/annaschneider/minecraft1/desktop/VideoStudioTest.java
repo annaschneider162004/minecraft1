@@ -8,8 +8,9 @@ import com.annaschneider.minecraft1.video.BuildMilestone;
 import com.annaschneider.minecraft1.video.ExecutableLocator;
 import com.annaschneider.minecraft1.video.ExportMode;
 import com.annaschneider.minecraft1.video.ProcessRunner;
+import com.annaschneider.minecraft1.video.voice.VoiceCatalogEntry;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
-import com.annaschneider.minecraft1.video.voice.VoicePack;
+import com.annaschneider.minecraft1.video.voice.VoiceFilter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -23,15 +24,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JComboBox;
+import javax.swing.JList;
 import javax.swing.SwingUtilities;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VideoStudioTest {
     @Test
-    void restoresClonedSelectionAndSwitchesBetweenProfilesAndPacks(@TempDir Path dir) throws Exception {
+    void restoresClonedSelectionAndFiltersTheUnifiedCatalog(@TempDir Path dir) throws Exception {
         org.junit.jupiter.api.Assumptions.assumeFalse(java.awt.GraphicsEnvironment.isHeadless(), "needs a display");
         String id = "clone-" + UUID.randomUUID();
         Path sample = dir.resolve(id + ".sample.wav");
@@ -57,20 +60,31 @@ class VideoStudioTest {
                 window.set(new VideoStudioWindow(studio, BuildContext::empty, () -> "No build", dir));
                 window.get().showStudio();
             });
-            ExecutorService worker = (ExecutorService) field(window.get(), "worker");
-            worker.submit(() -> { }).get(10, TimeUnit.SECONDS);
+            settle(window.get());
+            JList<?> voices = (JList<?>) field(window.get(), "voiceList");
+            JComboBox<?> states = (JComboBox<?>) field(window.get(), "stateBox");
             SwingUtilities.invokeAndWait(() -> {
-                JComboBox<?> modes = (JComboBox<?>) field(window.get(), "voiceMode");
-                JComboBox<?> voices = (JComboBox<?>) field(window.get(), "voiceBox");
-                assertEquals(2, modes.getSelectedIndex());
-                assertEquals(id, ((VoicePack) voices.getSelectedItem()).id());
+                assertEquals(id, ((VoiceCatalogEntry) voices.getSelectedValue()).id());
                 assertEquals(id, settings.voiceId(), "refresh must not overwrite the saved selection");
-                modes.setSelectedIndex(0);
-                assertEquals("piper", ((VoicePack) voices.getSelectedItem()).engine());
-                modes.setSelectedIndex(1);
-                assertEquals("piper", ((VoicePack) voices.getSelectedItem()).engine());
-                modes.setSelectedIndex(2);
-                assertEquals(id, ((VoicePack) voices.getSelectedItem()).id());
+                assertTrue(listed(voices).contains("en_US-test-medium"), "installed packs are listed with the clones");
+                assertTrue(listed(voices).contains("en_US-arctic-medium#speaker-0"), "verified downloadable voices are listed");
+                states.setSelectedItem(VoiceFilter.State.INSTALLED);
+            });
+            settle(window.get());
+            SwingUtilities.invokeAndWait(() -> {
+                assertEquals(List.of("en_US-test-medium", id), listed(voices));
+                assertEquals(id, ((VoiceCatalogEntry) voices.getSelectedValue()).id(), "filters keep the selection");
+                voices.setSelectedIndex(1);
+                assertEquals("en_US-test-medium", settings.voiceId());
+                states.setSelectedItem(VoiceFilter.State.CLONED);
+            });
+            settle(window.get());
+            SwingUtilities.invokeAndWait(() -> {
+                assertEquals(List.of(id), listed(voices));
+                assertNull(voices.getSelectedValue(), "the chosen pack is hidden, not replaced");
+                assertEquals("en_US-test-medium", settings.voiceId());
+                voices.setSelectedIndex(1);
+                assertEquals(id, settings.voiceId());
             });
         } finally {
             if (window.get() != null) {
@@ -79,6 +93,23 @@ class VideoStudioTest {
             }
             node.removeNode();
         }
+    }
+
+    private static void settle(VideoStudioWindow window) throws Exception {
+        for (String executor : List.of("worker", "filterWorker", "worker", "filterWorker")) {
+            ((ExecutorService) field(window, executor)).submit(() -> { }).get(10, TimeUnit.SECONDS);
+            SwingUtilities.invokeAndWait(() -> { });
+        }
+    }
+
+    private static List<String> listed(JList<?> list) {
+        List<String> ids = new java.util.ArrayList<>();
+        for (int i = 0; i < list.getModel().getSize(); i++) {
+            if (list.getModel().getElementAt(i) instanceof VoiceCatalogEntry entry) {
+                ids.add(entry.id());
+            }
+        }
+        return ids;
     }
 
     private static Object field(VideoStudioWindow window, String name) {

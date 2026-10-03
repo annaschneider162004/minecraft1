@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -41,20 +42,62 @@ public final class PiperTtsEngine implements TtsEngine {
     }
 
     @Override
+    public boolean supportsSpeakers() {
+        return true;
+    }
+
+    /** A chosen speaker must exist in the model's own config; single-speaker models accept no speaker. */
+    @Override
+    public Optional<String> unsupportedReason(VoiceSelection selection) {
+        VoiceSpeaker speaker = selection.speaker();
+        if (speaker == null) {
+            return Optional.empty();
+        }
+        List<VoiceSpeaker> speakers;
+        try {
+            speakers = PiperSpeakers.read(selection.voice().config());
+        } catch (InvalidVoicePackException ex) {
+            return Optional.of("Cannot read the speakers of voice '" + selection.voice().name() + "': " + ex.getMessage());
+        }
+        if (speakers.isEmpty()) {
+            return Optional.of("Voice '" + selection.voice().name() + "' (" + selection.voice().id()
+                + ") has a single speaker; speaker " + speaker.index() + " does not exist.");
+        }
+        if (speaker.index() >= speakers.size()) {
+            return Optional.of("Speaker " + speaker.index() + " does not exist in voice '" + selection.voice().name() + "' ("
+                + selection.voice().id() + " has " + speakers.size() + " speakers: 0-" + (speakers.size() - 1) + ").");
+        }
+        return Optional.empty();
+    }
+
+    @Override
     public void synthesize(VoicePack voice, String text, Path output) throws NarrationException {
+        synthesize(VoiceSelection.of(voice), text, output);
+    }
+
+    @Override
+    public void synthesize(VoiceSelection selection, String text, Path output) throws NarrationException {
         Optional<String> problem = unavailableReason();
+        if (problem.isEmpty()) {
+            problem = unsupportedReason(selection);
+        }
         if (problem.isPresent()) {
             throw new NarrationException(problem.get());
         }
+        VoicePack voice = selection.voice();
         String line = text.replaceAll("[\\p{Cntrl}\\p{Cf}]", " ").replaceAll("\\s+", " ").strip();
         if (line.isEmpty()) {
             throw new NarrationException("Nothing to say: the narration text is empty.");
         }
-        List<String> command = List.of(executable.toString(), "--model", voice.model().toString(), "--config",
-            voice.config().toString(), "--output_file", output.toString());
+        List<String> command = new ArrayList<>(List.of(executable.toString(), "--model", voice.model().toString(), "--config",
+            voice.config().toString()));
+        if (selection.speaker() != null) {
+            command.addAll(List.of("--speaker", Integer.toString(selection.speaker().index())));
+        }
+        command.addAll(List.of("--output_file", output.toString()));
         ProcessRunner.Result result;
         try {
-            result = runner.run(command, line + "\n", TIMEOUT);
+            result = runner.run(List.copyOf(command), line + "\n", TIMEOUT);
         } catch (IOException ex) {
             throw new NarrationException("Could not run Piper (" + executable + "): " + ex.getMessage(), ex);
         } catch (InterruptedException ex) {
@@ -63,7 +106,7 @@ public final class PiperTtsEngine implements TtsEngine {
         }
         try {
             if (!result.ok() || !Files.isRegularFile(output) || Files.size(output) <= 44) {
-                throw new NarrationException("Piper could not speak with voice '" + voice.name() + "' (exit code "
+                throw new NarrationException("Piper could not speak with voice '" + selection.name() + "' (exit code "
                     + result.exitCode() + "): " + result.tail(3));
             }
         } catch (IOException ex) {

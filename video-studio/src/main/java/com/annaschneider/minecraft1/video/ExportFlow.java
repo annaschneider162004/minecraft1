@@ -210,6 +210,7 @@ public final class ExportFlow {
 
         private Callable<Runnable> narrationJob(Path work, Path target) {
             return () -> {
+                listener.progress("Voice: " + request.voice().describe());
                 Narration made = pipeline.narrate(request.storyboard(), request.voice(), work, listener::progress);
                 if (made.clips().isEmpty()) {
                     throw new NarrationException("The story has no narration text to speak.");

@@ -11,6 +11,7 @@ import com.annaschneider.minecraft1.video.voice.NarrationClip;
 import com.annaschneider.minecraft1.video.voice.NarrationException;
 import com.annaschneider.minecraft1.video.voice.Narrator;
 import com.annaschneider.minecraft1.video.voice.VoicePack;
+import com.annaschneider.minecraft1.video.voice.VoiceSelection;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -78,8 +79,18 @@ public final class VideoPipeline {
         return narrator.unavailableReason(voice);
     }
 
+    /** Why exactly {@code voice} (voice and speaker) cannot be spoken right now, or empty when it can. */
+    public Optional<String> narrationUnavailable(VoiceSelection voice) {
+        return narrator.unavailableReason(voice);
+    }
+
     /** Narration stage on its own: one WAV per scene in {@code folder}; scenes grow to fit their narration. */
     public Narration narrate(Storyboard storyboard, VoicePack voice, Path folder, Consumer<String> progress) throws NarrationException {
+        return narrate(storyboard, VoiceSelection.of(voice), folder, progress);
+    }
+
+    /** Narration stage with exactly the selected voice and speaker. */
+    public Narration narrate(Storyboard storyboard, VoiceSelection voice, Path folder, Consumer<String> progress) throws NarrationException {
         Map<Integer, NarrationClip> clips = narrator.narrate(storyboard, voice, folder, progress).stream()
             .collect(Collectors.toMap(NarrationClip::sceneIndex, Function.identity()));
         return new Narration(fitToNarration(storyboard, clips), clips);
@@ -118,7 +129,7 @@ public final class VideoPipeline {
                 storyboard = narrated.storyboard();
                 narration = narrated.clips();
             } else if (request.voice() != null) {
-                progress.accept("Generating narration with " + request.voice().name() + "...");
+                progress.accept("Generating narration with " + request.voice().describe() + "...");
                 try {
                     narration = narrator.narrate(storyboard, request.voice(), work, progress).stream()
                         .collect(Collectors.toMap(NarrationClip::sceneIndex, Function.identity()));

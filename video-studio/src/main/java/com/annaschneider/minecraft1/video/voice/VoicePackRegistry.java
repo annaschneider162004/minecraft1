@@ -52,6 +52,7 @@ public final class VoicePackRegistry {
         List<Path> models;
         try (Stream<Path> files = Files.walk(folder, 2)) {
             models = files.filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(MODEL_EXTENSION))
+                .filter(path -> !folder.relativize(path).getName(0).toString().startsWith(VoiceInstaller.STAGING_PREFIX))
                 .sorted().toList();
         } catch (IOException | java.io.UncheckedIOException ex) {
             problems.add("Cannot read the voices folder " + folder + ": " + ex.getMessage());
@@ -180,7 +181,7 @@ public final class VoicePackRegistry {
         }
     }
 
-    private static JsonObject readJson(Path file) throws InvalidVoicePackException {
+    static JsonObject readJson(Path file) throws InvalidVoicePackException {
         if (size(file) > MAX_JSON_BYTES) {
             throw new InvalidVoicePackException(file.getFileName() + " is too large for a voice config (max 1 MB)");
         }

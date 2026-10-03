@@ -17,10 +17,14 @@ import com.annaschneider.minecraft1.video.story.StoryRequest;
 import com.annaschneider.minecraft1.video.story.StoryResult;
 import com.annaschneider.minecraft1.video.voice.NarrationClip;
 import com.annaschneider.minecraft1.video.voice.NarrationException;
+import com.annaschneider.minecraft1.video.voice.VoiceCatalog;
+import com.annaschneider.minecraft1.video.voice.VoiceCatalogEntry;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
+import com.annaschneider.minecraft1.video.voice.VoiceFilter;
+import com.annaschneider.minecraft1.video.voice.VoiceInstallException;
 import com.annaschneider.minecraft1.video.voice.VoicePack;
+import com.annaschneider.minecraft1.video.voice.VoiceSelection;
 import com.annaschneider.minecraft1.video.voice.ClonedVoiceProfiles;
-import com.annaschneider.minecraft1.video.voice.XttsTtsEngine;
 
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
@@ -28,6 +32,7 @@ import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineEvent;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
+import javax.swing.AbstractListModel;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
@@ -48,7 +53,11 @@ import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -71,6 +80,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 /**
@@ -83,6 +93,8 @@ import java.util.function.Supplier;
 final class VideoStudioWindow extends JFrame {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
     private static final String NO_VOICE = "(No narration)";
+    private static final String ANY_LANGUAGE = "All languages";
+    private static final String ANY_ENGINE = "All engines";
 
     private final VideoStudio studio;
     private final Supplier<BuildContext> buildContext;
@@ -101,10 +113,22 @@ final class VideoStudioWindow extends JFrame {
     private final DefaultListModel<Path> footageModel = new DefaultListModel<>();
     private final JList<Path> footageList = new JList<>(footageModel);
     private final JLabel timelineLabel = new JLabel(" ");
-    private final JComboBox<Object> voiceBox = new JComboBox<>();
-    private final JComboBox<String> voiceMode = new JComboBox<>(new String[] {
-        "Built-in voice", "Custom voice pack", "Clone from sample audio"
+    private final ExecutorService filterWorker = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "voice-catalog-filter");
+        thread.setDaemon(true);
+        return thread;
     });
+    private final AtomicInteger filterGeneration = new AtomicInteger();
+    private final EntryListModel voiceListModel = new EntryListModel();
+    private final JList<Object> voiceList = new JList<>(voiceListModel);
+    private final JTextField voiceSearch = new JTextField(14);
+    private final JComboBox<String> languageBox = new JComboBox<>(new String[] {ANY_LANGUAGE});
+    private final JComboBox<String> engineBox = new JComboBox<>(new String[] {ANY_ENGINE});
+    private final JComboBox<VoiceFilter.State> stateBox = new JComboBox<>(VoiceFilter.State.values());
+    private final JCheckBox multiSpeakerBox = new JCheckBox("Multi-speaker only");
+    private final JLabel catalogCount = new JLabel(" ");
+    private final JButton installButton = new JButton("Install voice...");
+    private final Timer searchDelay = new Timer(200, event -> refilter());
     private final JLabel voiceInfo = new JLabel(" ");
     private final JTextArea storyArea = new JTextArea(14, 40);
     private final JButton writeButton = new JButton("Write story");
@@ -124,6 +148,10 @@ final class VideoStudioWindow extends JFrame {
     private final JLabel outputLabel = new JLabel(" ");
 
     private VoiceDiscovery voices;
+    private VoiceCatalog catalog;
+    /** Catalog id of the chosen voice ("" = no narration); kept when filters hide it. */
+    private String selectedId = "";
+    private boolean updatingVoices;
     private Storyboard storyboard;
     private boolean busy;
     private Path lastExport;
@@ -143,6 +171,7 @@ final class VideoStudioWindow extends JFrame {
         localAiBox.setSelected(studio.settings().useLocalAi());
         modeBox.setSelectedItem(studio.settings().exportMode());
         recordSpinner.setValue(studio.settings().recordSeconds());
+        selectedId = studio.settings().voiceId();
         refreshVoices();
     }
 
@@ -262,30 +291,89 @@ final class VideoStudioWindow extends JFrame {
         c.gridy = 7;
         c.insets = new Insets(10, 0, 4, 0);
         panel.add(title("3. Voice"), c);
-        voiceBox.setRenderer(new DefaultListCellRenderer() {
+        JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        filters.add(new JLabel("Search:"));
+        voiceSearch.setToolTipText("Words in the voice name, id, speaker, language or engine (e.g. \"arctic awb\", \"vi_VN\").");
+        voiceSearch.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent event) {
+                searchDelay.restart();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent event) {
+                searchDelay.restart();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent event) {
+                searchDelay.restart();
+            }
+        });
+        searchDelay.setRepeats(false);
+        filters.add(voiceSearch);
+        languageBox.setToolTipText("Language family (en, vi) or exact code (en_US, vi_VN).");
+        engineBox.setToolTipText("piper = installed/downloadable Piper voices, xtts = cloned voices.");
+        stateBox.setToolTipText("Installed voices work offline; downloadable voices must be installed first.");
+        multiSpeakerBox.setToolTipText("Only speakers of multi-speaker models (each speaker is its own entry).");
+        for (JComboBox<?> box : List.of(languageBox, engineBox, stateBox)) {
+            box.addActionListener(event -> {
+                if (!updatingVoices) {
+                    refilter();
+                }
+            });
+            filters.add(box);
+        }
+        multiSpeakerBox.addActionListener(event -> refilter());
+        filters.add(multiSpeakerBox);
+        c.gridy = 8;
+        c.insets = new Insets(0, 0, 4, 0);
+        panel.add(filters, c);
+
+        voiceList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        voiceList.setVisibleRowCount(6);
+        voiceList.setPrototypeCellValue("English (United States) multi-speaker voice name - speaker 9999/9999 [downloadable]");
+        voiceList.setCellRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
                 Component label = super.getListCellRendererComponent(list, value, index, selected, focus);
-                if (value instanceof VoicePack voice) {
-                    setText(voice.label());
+                if (value instanceof VoiceCatalogEntry entry) {
+                    setText(entry.label());
+                    if (!entry.installed() && !selected) {
+                        setForeground(Color.GRAY);
+                    }
                 }
                 return label;
             }
         });
-        voiceBox.addActionListener(event -> {
-            VoicePack voice = selectedVoice();
-            studio.settings().setVoiceId(voice == null ? "" : voice.id());
-            voiceInfo.setText(voice == null ? "The video is exported without narration." : voice.id()
-                + (voice.description().isBlank() ? "" : " - " + voice.description()));
+        voiceList.addListSelectionListener(event -> {
+            if (updatingVoices || event.getValueIsAdjusting()) {
+                return;
+            }
+            Object value = voiceList.getSelectedValue();
+            if (value == null) {
+                return;
+            }
+            selectedId = value instanceof VoiceCatalogEntry entry ? entry.id() : "";
+            studio.settings().setVoiceId(selectedId);
+            showSelectedVoice();
         });
-        voiceMode.setToolTipText("Built-in/custom modes use installed Piper packs; clone mode uses local sample profiles.");
-        voiceMode.addActionListener(event -> updateVoiceList(studio.settings().voiceId()));
-        c.gridy = 8;
-        c.insets = new Insets(0, 0, 4, 0);
-        panel.add(voiceBox, c);
+        c.gridy = 9;
+        c.fill = GridBagConstraints.BOTH;
+        c.weighty = 0.4;
+        panel.add(new JScrollPane(voiceList), c);
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.weighty = 0;
+        catalogCount.setForeground(Color.GRAY);
+        c.gridy = 10;
+        panel.add(catalogCount, c);
+
         JPanel voiceButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        previewButton.setToolTipText("Preview voice / Nghe thử voice: speak a short sample with the selected voice.");
+        previewButton.setToolTipText("Preview voice / Nghe thử voice: speak a short sample with exactly the selected voice and speaker.");
         previewButton.addActionListener(event -> previewVoice());
+        installButton.setToolTipText("Download and install the selected verified voice (only when you click; checked before it is used).");
+        installButton.setEnabled(false);
+        installButton.addActionListener(event -> installVoice());
         JButton refresh = new JButton("Refresh");
         refresh.setToolTipText("Look for new voice files in the voices folder.");
         refresh.addActionListener(event -> refreshVoices());
@@ -293,6 +381,7 @@ final class VideoStudioWindow extends JFrame {
         openVoices.setToolTipText("Copy Piper voices (.onnx + .onnx.json) here, then click Refresh.");
         openVoices.addActionListener(event -> openFolder(studio.settings().voicesFolder(), true));
         voiceButtons.add(previewButton);
+        voiceButtons.add(installButton);
         voiceButtons.add(refresh);
         voiceButtons.add(openVoices);
         JPanel cloningButtons = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
@@ -301,7 +390,6 @@ final class VideoStudioWindow extends JFrame {
         JButton recordSample = new JButton("Record sample / Ghi âm mẫu");
         recordSample.setEnabled(false);
         recordSample.setToolTipText("Microphone recording is not available in this UI. Upload a WAV sample instead.");
-        cloningButtons.add(voiceMode);
         cloningButtons.add(clone);
         JPanel voiceControls = new JPanel(new BorderLayout(0, 4));
         JPanel cloneControls = new JPanel(new BorderLayout(0, 4));
@@ -309,11 +397,11 @@ final class VideoStudioWindow extends JFrame {
         cloneControls.add(recordSample, BorderLayout.SOUTH);
         voiceControls.add(voiceButtons, BorderLayout.NORTH);
         voiceControls.add(cloneControls, BorderLayout.SOUTH);
-        busyDisabled.addAll(List.of(refresh, voiceBox, voiceMode, clone));
-        c.gridy = 9;
+        busyDisabled.addAll(List.of(refresh, clone));
+        c.gridy = 11;
         panel.add(voiceControls, c);
         voiceInfo.setForeground(Color.GRAY);
-        c.gridy = 10;
+        c.gridy = 12;
         panel.add(voiceInfo, c);
         return panel;
     }
@@ -402,33 +490,164 @@ final class VideoStudioWindow extends JFrame {
     private void refreshVoices() {
         runInBackground("Looking for voices...", () -> {
             VoiceDiscovery found = studio.discoverVoices();
+            VoiceCatalog built = studio.voiceCatalog(found);
             List<String> diagnostics = studio.diagnostics(found);
             SwingUtilities.invokeLater(() -> {
-                voices = found;
-                String savedId = studio.settings().voiceId();
-                if (found.find(savedId).map(v -> XttsTtsEngine.ID.equals(v.engine())).orElse(false)) {
-                    voiceMode.setSelectedIndex(2);
-                }
-                updateVoiceList(savedId);
                 diagnostics.forEach(this::log);
+                showCatalog(found, built);
                 if (found.voices().isEmpty()) {
-                    log("No voices yet: copy a Piper voice (.onnx + .onnx.json) into " + found.folder() + " and click Refresh.");
+                    log("No voices installed yet: select a downloadable voice and click Install voice, or copy a Piper "
+                        + "voice (.onnx + .onnx.json) into " + found.folder() + " and click Refresh.");
                 }
             });
         });
     }
 
-    private void updateVoiceList(String selectedId) {
-        if (voices == null) {
+    /** Shows a freshly built catalog; the chosen voice is kept by its stable id. */
+    private void showCatalog(VoiceDiscovery found, VoiceCatalog built) {
+        voices = found;
+        catalog = built;
+        log(built.summary() + ".");
+        built.problems().stream().filter(problem -> !found.problems().contains(problem)).forEach(problem -> log("  " + problem));
+        if (!selectedId.isEmpty() && built.find(selectedId).isEmpty()) {
+            log("The saved voice '" + selectedId + "' was not found; choose a voice in the list.");
+            selectedId = built.entries().stream().filter(VoiceCatalogEntry::installed).map(VoiceCatalogEntry::id).findFirst().orElse("");
+        } else if (selectedId.isEmpty() && studio.settings().voiceId().isEmpty()) {
+            selectedId = built.entries().stream().filter(VoiceCatalogEntry::installed).map(VoiceCatalogEntry::id).findFirst().orElse("");
+        }
+        updatingVoices = true;
+        try {
+            List<String> languages = new ArrayList<>();
+            built.languages().forEach(code -> {
+                String family = code.split("[_-]")[0];
+                if (!languages.contains(family)) {
+                    languages.add(family);
+                }
+                if (!languages.contains(code)) {
+                    languages.add(code);
+                }
+            });
+            languages.sort(null);
+            refill(languageBox, ANY_LANGUAGE, languages);
+            refill(engineBox, ANY_ENGINE, built.engines());
+        } finally {
+            updatingVoices = false;
+        }
+        refilter();
+    }
+
+    private static void refill(JComboBox<String> box, String any, List<String> values) {
+        Object current = box.getSelectedItem();
+        DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+        model.addElement(any);
+        values.forEach(model::addElement);
+        box.setModel(model);
+        box.setSelectedItem(current != null && values.contains(current) ? current : any);
+    }
+
+    /** Filters the catalog on a background thread; only the newest result is shown. */
+    private void refilter() {
+        VoiceCatalog current = catalog;
+        if (current == null) {
             return;
         }
-        boolean cloned = voiceMode.getSelectedIndex() == 2;
-        DefaultComboBoxModel<Object> model = new DefaultComboBoxModel<>();
-        model.addElement(NO_VOICE);
-        voices.voices().stream().filter(v -> cloned == XttsTtsEngine.ID.equals(v.engine())).forEach(model::addElement);
-        voiceBox.setModel(model);
-        VoicePack selected = voices.find(selectedId).filter(v -> cloned == XttsTtsEngine.ID.equals(v.engine())).orElse(null);
-        voiceBox.setSelectedItem(selected != null ? selected : model.getElementAt(model.getSize() > 1 ? 1 : 0));
+        String language = ANY_LANGUAGE.equals(languageBox.getSelectedItem()) ? "" : String.valueOf(languageBox.getSelectedItem());
+        String engine = ANY_ENGINE.equals(engineBox.getSelectedItem()) ? "" : String.valueOf(engineBox.getSelectedItem());
+        VoiceFilter filter = new VoiceFilter(voiceSearch.getText(), language, engine,
+            (VoiceFilter.State) stateBox.getSelectedItem(), multiSpeakerBox.isSelected());
+        int generation = filterGeneration.incrementAndGet();
+        filterWorker.submit(() -> {
+            List<VoiceCatalogEntry> shown = current.filter(filter);
+            SwingUtilities.invokeLater(() -> {
+                if (generation == filterGeneration.get() && current == catalog) {
+                    showEntries(current, shown);
+                }
+            });
+        });
+    }
+
+    private void showEntries(VoiceCatalog current, List<VoiceCatalogEntry> shown) {
+        updatingVoices = true;
+        try {
+            voiceListModel.set(shown);
+            int index = selectedId.isEmpty() ? 0 : shown.stream().map(VoiceCatalogEntry::id).toList().indexOf(selectedId) + 1;
+            if (index > 0 || selectedId.isEmpty()) {
+                voiceList.setSelectedIndex(index);
+                voiceList.ensureIndexIsVisible(index);
+            } else {
+                voiceList.clearSelection();
+            }
+        } finally {
+            updatingVoices = false;
+        }
+        catalogCount.setText(String.format(java.util.Locale.ROOT, "Showing %d of %d entries (%d installed, %d verified "
+            + "downloadable, %d models). Only real installed or verified voices are listed.", shown.size(), current.size(),
+            current.installedCount(), current.downloadableCount(), current.modelCount()));
+        showSelectedVoice();
+    }
+
+    private void showSelectedVoice() {
+        VoiceCatalogEntry entry = catalog == null ? null : catalog.find(selectedId).orElse(null);
+        installButton.setEnabled(!busy && entry != null && entry.downloadable());
+        if (entry == null) {
+            voiceInfo.setText(selectedId.isEmpty() ? "The video is exported without narration." : "Loading voices...");
+            return;
+        }
+        boolean hidden = voiceListModel.indexOf(entry) < 0;
+        String speaker = entry.speaker() == null ? "" : ", speaker " + entry.speaker().index() + " '" + entry.speaker().name()
+            + "' of " + entry.speakerCount();
+        voiceInfo.setText("<html>" + escape(entry.id() + " - " + entry.source().label() + ", " + entry.language() + ", "
+            + entry.engine() + speaker + (entry.installed() ? ", installed" : ", not installed (click Install voice)")
+            + (entry.description().isBlank() ? "" : " - " + entry.description()) + (hidden ? " (hidden by the filters)" : ""))
+            + "</html>");
+    }
+
+    private static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private void installVoice() {
+        VoiceCatalogEntry entry = catalog == null ? null : catalog.find(selectedId).orElse(null);
+        if (entry == null || !entry.downloadable()) {
+            error("Select a downloadable voice first.");
+            return;
+        }
+        var model = entry.download();
+        String speakers = model.speakers().isEmpty() ? "1 speaker" : model.speakers().size() + " speakers (each one is listed "
+            + "as its own voice)";
+        int answer = JOptionPane.showConfirmDialog(this, "Download and install " + model.modelId() + "?\n\n"
+            + VoiceCatalogEntry.megabytes(model.totalBytes()) + " from " + model.baseUrl().getHost() + ", " + speakers + ".\n"
+            + "The files are checked against the verified size and checksum and installed into\n"
+            + studio.settings().voicesFolder() + ". Nothing else is downloaded.\n"
+            + "See the model card on huggingface.co/rhasspy/piper-voices for the voice's license.",
+            "Install voice", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (answer != JOptionPane.OK_OPTION) {
+            return;
+        }
+        String id = entry.id();
+        Future<?> task = runInBackground("Installing " + model.modelId() + "...", () -> {
+            try {
+                studio.voiceInstaller().install(model, studio.settings().voicesFolder(), message -> SwingUtilities.invokeLater(() -> {
+                    progress.setString(message);
+                    log(message);
+                }));
+            } catch (VoiceInstallException ex) {
+                SwingUtilities.invokeLater(() -> error(ex.getMessage()));
+                return;
+            }
+            VoiceDiscovery found = studio.discoverVoices();
+            VoiceCatalog built = studio.voiceCatalog(found);
+            SwingUtilities.invokeLater(() -> {
+                selectedId = id;
+                studio.settings().setVoiceId(id);
+                showCatalog(found, built);
+                log("Installed. Selected voice: " + built.find(id).map(VoiceCatalogEntry::label).orElse(id));
+            });
+        });
+        if (task != null) {
+            flowTask = task;
+            cancelButton.setEnabled(true);
+        }
     }
 
     private void cloneVoice() {
@@ -458,12 +677,12 @@ final class VideoStudioWindow extends JFrame {
                         log(message);
                     }));
                 VoiceDiscovery found = studio.discoverVoices();
+                VoiceCatalog built = studio.voiceCatalog(found);
                 SwingUtilities.invokeLater(() -> {
-                    voices = found;
-                    voiceMode.setSelectedIndex(2);
-                    updateVoiceList(profile.id());
+                    selectedId = profile.id();
                     studio.settings().setVoiceId(profile.id());
-                    voiceInfo.setText(ClonedVoiceProfiles.READY);
+                    showCatalog(found, built);
+                    log(ClonedVoiceProfiles.READY + ": " + profile.name());
                 });
             } catch (NarrationException ex) {
                 SwingUtilities.invokeLater(() -> {
@@ -482,13 +701,19 @@ final class VideoStudioWindow extends JFrame {
         }
         PromptAnalysis analysis = PromptAnalysis.of(prompt);
         Double length = analysis.lengthGiven() ? null : ((Number) lengthSpinner.getValue()).doubleValue();
-        VoicePack voice = selectedVoice();
+        VoiceSelection voice;
+        try {
+            voice = selectedVoice();
+        } catch (NarrationException ex) {
+            voice = null;
+        }
+        String storyLanguage = voice == null ? null : voice.storyLanguage();
         BuildContext context = buildContext.get();
         timelineLabel.setText(buildDescription.get());
         runInBackground("Writing the story...", () -> {
             StoryResult result;
             try {
-                result = studio.pipeline().writeStory(new StoryRequest(prompt, context, length, voice == null ? null : voice.storyLanguage()));
+                result = studio.pipeline().writeStory(new StoryRequest(prompt, context, length, storyLanguage));
             } catch (IllegalArgumentException ex) {
                 SwingUtilities.invokeLater(() -> error(ex.getMessage()));
                 return;
@@ -514,7 +739,14 @@ final class VideoStudioWindow extends JFrame {
             writeStory(this::export);
             return;
         }
-        VoicePack voice = selectedVoice();
+        VoiceSelection voice;
+        try {
+            voice = selectedVoice();
+        } catch (NarrationException ex) {
+            error(ex.getMessage());
+            return;
+        }
+        log(voice == null ? "Voice: none (the video is exported without narration)" : "Voice: " + voice.describe());
         if (voice != null && !voice.storyLanguage().equals(storyboard.language())) {
             log("Note: the story is in '" + storyboard.language() + "' but the voice speaks '" + voice.language()
                 + "'. Click Write story again to match the voice.");
@@ -555,7 +787,19 @@ final class VideoStudioWindow extends JFrame {
             return;
         }
         ExportMode mode = modeBox.getSelectedItem() instanceof ExportMode chosen ? chosen : ExportMode.AUTO_EXPORT;
-        VoicePack voice = selectedVoice();
+        VoiceSelection voice;
+        try {
+            voice = selectedVoice();
+        } catch (NarrationException ex) {
+            if (mode.narrates()) {
+                error(ex.getMessage());
+                return;
+            }
+            voice = null;
+        }
+        if (mode.narrates() && voice != null) {
+            log("Voice: " + voice.describe());
+        }
         if (mode.narrates() && voice != null && !voice.storyLanguage().equals(storyboard.language())) {
             log("Note: the story is in '" + storyboard.language() + "' but the voice speaks '" + voice.language()
                 + "'. Click Write story again to match the voice.");
@@ -658,20 +902,26 @@ final class VideoStudioWindow extends JFrame {
     }
 
     private void previewVoice() {
-        VoicePack voice = selectedVoice();
+        VoiceSelection voice;
+        try {
+            voice = selectedVoice();
+        } catch (NarrationException ex) {
+            error("Voice preview failed: " + ex.getMessage());
+            return;
+        }
         if (voice == null) {
-            error("Choose a voice first (copy voices into the voices folder, then click Refresh).");
+            error("Choose a voice first (install one from the list or copy voices into the voices folder, then click Refresh).");
             return;
         }
         String language = voice.storyLanguage();
-        runInBackground("Speaking a sample with " + voice.name() + "...", () -> {
+        runInBackground("Speaking a sample with " + voice.describe() + "...", () -> {
             Path wav = null;
             try {
                 wav = Files.createTempFile("architect-voice-preview-", ".wav");
                 NarrationClip clip = studio.narrator().preview(voice, com.annaschneider.minecraft1.video.voice.Narrator.previewText(language), wav);
                 play(wav);
                 wav = null; // deleted after playback
-                SwingUtilities.invokeLater(() -> log(String.format(java.util.Locale.ROOT, "Playing %s (%.1f s).", voice.name(), clip.seconds())));
+                SwingUtilities.invokeLater(() -> log(String.format(java.util.Locale.ROOT, "Playing %s (%.1f s).", voice.describe(), clip.seconds())));
             } catch (NarrationException | IOException ex) {
                 SwingUtilities.invokeLater(() -> error("Voice preview failed: " + ex.getMessage()));
             } finally {
@@ -821,7 +1071,7 @@ final class VideoStudioWindow extends JFrame {
             + "A length in the text (\"45 seconds\", \"2 phút\") wins over the Length box; <i>timelapse</i>/<i>fast</i> gives more "
             + "sped-up footage. Vietnamese text gives a Vietnamese story.</li>"
             + "<li>Add the footage (<b>ReplayMod videos...</b> or <b>Add videos...</b>). Without footage the video uses title cards.</li>"
-            + "<li>Pick a voice and click <b>Preview voice</b>.</li>"
+            + "<li>Pick a voice in the catalog (search or filter it) and click <b>Preview voice</b>.</li>"
             + "<li><b>Write story</b>, then <b>Export video</b>. The MP4, subtitles (.srt) and script are saved in the output folder.</li></ol>"
             + "<p>Scenes follow the progress of the last build made with this app (start, 25 %, 75 %, finish). "
             + "Without it, scenes are spread evenly over the footage.</p>"
@@ -837,15 +1087,28 @@ final class VideoStudioWindow extends JFrame {
             + "Vietnamese stories show Vietnamese labels). Keep the Minecraft window visible while recording (Windows: whole "
             + "desktop, macOS: screen 0, Linux: X11 display). If a job fails, nothing is exported, the finished recording or "
             + "narration stays in the output folder, and <b>Retry</b> starts again. <b>Cancel</b> stops both jobs.</p>"
-            + "<h3>Voices</h3><p>Download a Piper voice (both the <i>.onnx</i> and <i>.onnx.json</i> file, e.g. "
-            + "<i>vi_VN-vais1000-medium</i> or <i>en_US-amy-medium</i>) from huggingface.co/rhasspy/piper-voices, copy them into "
-            + "the voices folder (<b>Open voices folder</b>) and click <b>Refresh</b>. An optional <i>&lt;name&gt;.voice.json</i> "
-            + "sets <i>name</i>, <i>language</i> and <i>description</i>. Invalid files are listed in the log with the reason.</p>"
+            + "<h3>Voice catalog</h3><p>One list shows every voice: <b>installed</b> Piper packs from the voices folder, "
+            + "your <b>cloned</b> voices, and <b>downloadable</b> voices from the verified catalog bundled with the app "
+            + "(English and Vietnamese Piper models with their published sizes and checksums). Only real entries are "
+            + "listed - installed files or verified catalog metadata - so the count is exactly what the data provides; "
+            + "the list stays fast with thousands of entries. Filter by language, engine, installed/downloadable/cloned "
+            + "and <i>Multi-speaker only</i>, or search by name, id or speaker.</p>"
+            + "<p><b>Multi-speaker models</b> (e.g. <i>en_US-arctic-medium</i>, <i>vi_VN-vivos-x_low</i>) appear once per "
+            + "speaker, with a stable id such as <i>en_US-arctic-medium#speaker-2</i>. Preview, <b>Narrate only</b>, "
+            + "<b>Export video</b> and auto-export all speak with exactly the selected voice and speaker (shown in the log); "
+            + "if it cannot be spoken you get an error, never another voice.</p>"
+            + "<p><b>Install voice...</b> downloads a selected downloadable voice only when you click it and confirm. The "
+            + "files are checked against the verified size and checksum and validated before they are moved into the "
+            + "voices folder; a failed or cancelled install leaves nothing behind. Installed voices work offline. You can "
+            + "still add a Piper voice by hand (both the <i>.onnx</i> and <i>.onnx.json</i> file) from "
+            + "huggingface.co/rhasspy/piper-voices into the voices folder (<b>Open voices folder</b>) and click "
+            + "<b>Refresh</b>. An optional <i>&lt;name&gt;.voice.json</i> sets <i>name</i>, <i>language</i> and "
+            + "<i>description</i>. Invalid files are listed in the log with the reason.</p>"
             + "<h3>Clone voice from sample...</h3><p>Choose a local Coqui <i>tts</i> executable and a preinstalled XTTS v2 "
             + "model folder (model.pth, config.json, vocab.json) in <b>Tools...</b>. Click <b>Clone voice from sample...</b>, "
             + "upload a 6–60 second, 16-bit PCM WAV (mono/stereo, 8–96 kHz, max 20 MB), and name the profile. "
             + "Only use audio you have permission to clone. A successful synthesis check saves a reusable local profile "
-            + "in the voices folder. Select it in clone mode and click <b>Preview voice</b> before export. "
+            + "in the voices folder. Select it in the catalog (filter <i>Cloned</i>) and click <b>Preview voice</b> before export. "
             + "This backend supports English narration, not Vietnamese. Microphone recording is unavailable; use upload. "
             + "If cloning fails, existing Piper packs and export without narration remain available.</p>"
             + "<h3>Optional programs</h3><ul>"
@@ -874,9 +1137,49 @@ final class VideoStudioWindow extends JFrame {
 
     // ------------------------------------------------------------------ helpers
 
-    private VoicePack selectedVoice() {
-        Object selected = voiceBox.getSelectedItem();
-        return selected instanceof VoicePack voice ? voice : null;
+    /**
+     * The exact selected voice and speaker, or {@code null} for no narration.
+     *
+     * @throws NarrationException when the selected entry is not installed or no longer exists - never another voice
+     */
+    private VoiceSelection selectedVoice() throws NarrationException {
+        if (selectedId.isEmpty()) {
+            return null;
+        }
+        if (catalog == null) {
+            throw new NarrationException("The voices are still loading. Try again in a moment.");
+        }
+        return catalog.select(selectedId);
+    }
+
+    /** List model that swaps the whole filtered list at once (fast with thousands of entries). */
+    private static final class EntryListModel extends AbstractListModel<Object> {
+        private List<VoiceCatalogEntry> entries = List.of();
+
+        void set(List<VoiceCatalogEntry> shown) {
+            int old = entries.size();
+            entries = List.copyOf(shown);
+            if (old > 0) {
+                fireIntervalRemoved(this, 1, old);
+            }
+            if (!entries.isEmpty()) {
+                fireIntervalAdded(this, 1, entries.size());
+            }
+        }
+
+        int indexOf(VoiceCatalogEntry entry) {
+            return entries.indexOf(entry);
+        }
+
+        @Override
+        public int getSize() {
+            return entries.size() + 1;
+        }
+
+        @Override
+        public Object getElementAt(int index) {
+            return index == 0 ? NO_VOICE : entries.get(index - 1);
+        }
     }
 
     /** @return the running task (cancel it to interrupt the work), or {@code null} when another task is still running */
@@ -902,6 +1205,8 @@ final class VideoStudioWindow extends JFrame {
         progress.setIndeterminate(value);
         progress.setString(message);
         busyDisabled.forEach(component -> component.setEnabled(!value));
+        VoiceCatalogEntry chosen = catalog == null ? null : catalog.find(selectedId).orElse(null);
+        installButton.setEnabled(!value && chosen != null && chosen.downloadable());
         if (!value) {
             ExportMode mode = (ExportMode) modeBox.getSelectedItem();
             recordSpinner.setEnabled(mode != null && mode.records());
@@ -932,6 +1237,8 @@ final class VideoStudioWindow extends JFrame {
     @Override
     public void dispose() {
         worker.shutdownNow();
+        filterWorker.shutdownNow();
+        searchDelay.stop();
         super.dispose();
     }
 }

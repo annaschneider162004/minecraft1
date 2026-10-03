@@ -47,6 +47,20 @@ public final class XttsTtsEngine implements TtsEngine {
         return Optional.empty();
     }
 
+    /** Cloned profiles have no speakers and are English only; anything else is refused up front. */
+    @Override
+    public Optional<String> unsupportedReason(VoiceSelection selection) {
+        Optional<String> speaker = TtsEngine.super.unsupportedReason(selection);
+        if (speaker.isPresent()) {
+            return speaker;
+        }
+        if (!"en".equals(selection.language())) {
+            return Optional.of("This cloning backend currently supports English profiles only (voice '" + selection.name()
+                + "' is '" + selection.language() + "').");
+        }
+        return Optional.empty();
+    }
+
     @Override
     public void synthesize(VoicePack voice, String text, Path output) throws NarrationException {
         Optional<String> problem = unavailableReason();
