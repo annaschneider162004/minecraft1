@@ -8,6 +8,13 @@ import com.annaschneider.minecraft1.video.voice.VoiceFolders;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.HashSet;
+import java.util.Set;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 
 /** Video Studio choices: tool paths, folders, local AI, the selected voice and export mode (kept in its own preferences node). */
@@ -106,6 +113,42 @@ final class VideoStudioSettings {
 
     void setVoiceId(String value) {
         putOrRemove("voiceId", value);
+    }
+
+    Set<String> favoriteVoiceIds() {
+        Set<String> favorites = new HashSet<>();
+        Preferences root = preferences.node("voice-favorites");
+        try {
+            for (String child : root.childrenNames()) {
+                String id = root.node(child).get("id", "");
+                if (!id.isBlank()) {
+                    favorites.add(id);
+                }
+            }
+        } catch (BackingStoreException ex) {
+            throw new IllegalStateException("Cannot read voice favorites", ex);
+        }
+        return Set.copyOf(favorites);
+    }
+
+    void setVoiceFavorite(String id, boolean favorite) {
+        Objects.requireNonNull(id);
+        if (id.isBlank()) {
+            throw new IllegalArgumentException("A favorite needs a voice ID");
+        }
+        try {
+            String key = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(id.getBytes(StandardCharsets.UTF_8)));
+            Preferences root = preferences.node("voice-favorites");
+            if (favorite) {
+                root.node(key).put("id", id);
+            } else if (root.nodeExists(key)) {
+                root.node(key).removeNode();
+            }
+            root.flush();
+        } catch (NoSuchAlgorithmException | BackingStoreException ex) {
+            throw new IllegalStateException("Cannot save voice favorite", ex);
+        }
     }
 
     /** Mode of the Start button; Auto-export when both complete by default. */

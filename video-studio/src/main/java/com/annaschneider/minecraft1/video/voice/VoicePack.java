@@ -14,10 +14,15 @@ import java.nio.file.Path;
  * @param sampleRate output sample rate in Hz
  */
 public record VoicePack(String id, String name, String language, String engine, Path model, Path config, int sampleRate,
-                        String description) {
-    /** Short language for story text: "vi" or "en". */
+                        String description, Integer speakerId, String speakerIdentity) {
+    public VoicePack(String id, String name, String language, String engine, Path model, Path config, int sampleRate,
+                     String description) {
+        this(id, name, language, engine, model, config, sampleRate, description, null, null);
+    }
+
+    /** Primary language for story text, without silently treating other languages as English. */
     public String storyLanguage() {
-        return language.toLowerCase(java.util.Locale.ROOT).startsWith("vi") ? "vi" : "en";
+        return language == null ? "" : language.toLowerCase(java.util.Locale.ROOT).split("[_-]", 2)[0];
     }
 
     public String label() {

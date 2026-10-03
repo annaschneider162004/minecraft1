@@ -33,12 +33,27 @@ public final class Narrator {
         if (engine == null) {
             return Optional.of("Voice '" + voice.name() + "' needs the '" + voice.engine() + "' engine, which this app does not have.");
         }
+        String language = voice.storyLanguage();
+        if (!Set.of("en", "vi").contains(language)) {
+            return Optional.of("Unsupported narration language '" + voice.language() + "' (supported: en, vi).");
+        }
+        if (XttsTtsEngine.ID.equals(voice.engine()) && !"en".equals(language)) {
+            return Optional.of("XTTS voice cloning supports English narration only.");
+        }
         return engine.unavailableReason();
     }
 
     public List<NarrationClip> narrate(Storyboard storyboard, VoicePack voice, Path folder, Consumer<String> progress)
         throws NarrationException {
         TtsEngine engine = engine(voice);
+        String language = storyboard.language().toLowerCase(Locale.ROOT).split("[_-]", 2)[0];
+        if (!Set.of("en", "vi").contains(language)) {
+            throw new NarrationException("Unsupported storyboard language '" + storyboard.language() + "' (supported: en, vi).");
+        }
+        if (!language.equals(voice.storyLanguage())) {
+            throw new NarrationException("Storyboard language '" + storyboard.language() + "' does not match voice language '"
+                + voice.language() + "'.");
+        }
         List<NarrationClip> clips = new ArrayList<>();
         for (Scene scene : storyboard.scenes()) {
             if (scene.narration().isBlank()) {
@@ -55,12 +70,16 @@ public final class Narrator {
 
     /** Speaks a short sample so the user can hear the voice. */
     public NarrationClip preview(VoicePack voice, String text, Path wav) throws NarrationException {
+        TtsEngine engine = engine(voice);
         String sample = text == null || text.isBlank() ? previewText(voice.storyLanguage()) : text;
-        engine(voice).synthesize(voice, sample, wav);
+        engine.synthesize(voice, sample, wav);
         return new NarrationClip(-1, wav, WavInfo.seconds(wav));
     }
 
     public static String previewText(String language) {
+        if (!Set.of("en", "vi").contains(language)) {
+            throw new IllegalArgumentException("Unsupported preview language '" + language + "'");
+        }
         return "vi".equals(language)
             ? "Xin ch\u00e0o! \u0110\u00e2y l\u00e0 gi\u1ecdng \u0111\u1ecdc cho video x\u00e2y d\u1ef1ng Minecraft c\u1ee7a b\u1ea1n."
             : "Hello! This is the voice that will narrate your Minecraft build video.";

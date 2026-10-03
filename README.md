@@ -606,7 +606,8 @@ gradle :architect-desktop:runWithDemo    & rem the app, connected to the demo
 
 ### Video Studio: narrated build videos / Video tự động + lồng tiếng
 
-Click **Video Studio...** in the connection bar. Everything runs on this computer: no account, API key or upload.
+Click **Video Studio...** in the connection bar. Story writing and synthesis run on this computer: no account, API key
+or audio upload. **Manage voices** makes outbound HTTPS requests only when you explicitly install a model.
 
 1. **Record the build** – **Build + Record** (ReplayMod) or any screen recorder (OBS…). For ReplayMod open the replay and
    use *Render* to save an MP4 into `.minecraft\replay_videos`. While a build runs, the app notes its milestones
@@ -685,6 +686,104 @@ Ollama is only contacted on `localhost`/`127.0.0.1`/`::1`.
 3. Optional `<id>.voice.json` next to the model to set metadata:
    `{"name": "Bà kể chuyện", "language": "vi-VN", "engine": "piper", "description": "warm"}`.
 
+**Manage voices / Quản lý giọng** opens the bundled offline catalog alongside your installed packs and cloned profiles.
+Search, language/source filters and favorites work without contacting a server. **Refresh** reloads the bundled metadata
+and local files, not a remote manifest. Downloadable entries are **not installed or ready**; previews and selection for
+narration require an installed pack and its engine. Favorite IDs and the exact selected speaker ID persist across
+restarts. If a saved voice disappears, the app does not silently select a different speaker.
+
+**Exact included inventory (metadata only):**
+
+| Model | Language | Verified model-local speakers | ONNX bytes (shared) | Model-card dataset license / availability |
+|---|---|---:|---:|---|
+| `en_US-libritts-high` | English | 904 | 136,673,811 | CC BY 4.0; opt-in download |
+| `en_GB-vctk-medium` | English | 109 | 76,952,753 | CC BY 4.0; opt-in download |
+| `vi_VN-vais1000-medium` | Vietnamese | **1** | 63,201,294 | CC BY 4.0; opt-in download |
+| `vi_VN-vivos-x_low` | Vietnamese | 65 | 27,789,413 | **CC BY-NC-SA 4.0; noncommercial only**, opt-in download |
+| `vi_VN-25hours_single-low` | Vietnamese | 1 | 63,104,526 | **Unknown; unavailable**, no in-app download |
+
+There are **1,013 English and 67 Vietnamese verified model-local speaker IDs** across five models. **1,079** entries
+across four models are downloadable after license/restriction acceptance: **1,014 CC BY** and **65 noncommercial**
+entries. The unknown-license entry is **not** included in that downloadable total. These are actual config speaker
+identities, not renamed duplicates or presets. LibriTTS-R and alternate quality variants are deliberately not counted
+again. We have **not independently verified globally unique people across datasets**, an exhaustive latest Hugging
+Face inventory, or permission for every particular use; do not interpret this as “1,000 legally cleared unique people.”
+CC BY requires attribution/source/license and modification notices; CC BY-NC-SA adds noncommercial/share-alike
+restrictions. Cards state **dataset** licenses, not separate MIT licenses for weights or blanket voice/personality
+rights. Piper's software license is separate (current OHF Piper is GPL-3.0).
+
+**Target and shortfall:** registry capacity is **10,000 entries**, and the UI is tested with deterministic synthetic
+1,200-entry **TEST ONLY** data; no synthetic voices ship in production. The verified model-local catalog exceeds the
+1,000-entry target (catalog ID shortfall **0**). This PR supplies **0 installed models, 0 installed voices, 0 cloned
+profiles and 0 presets**; with no prior installation, the installed-voice shortfall to 1,000 is still **1,000** until
+you opt in to downloads. A claim of 1,000 independently deduplicated people remains **unverified**, not “fulfilled.”
+Installed speakers/models and cloned profiles are reported separately. The four downloadable ONNX files total
+**304,617,271 bytes (~290.5 MiB)** plus small configs/cards — not 1,079 separate binaries.
+
+**Số lượng thật:** catalog có **1.013 speaker ID tiếng Anh**, **67 speaker ID tiếng Việt**: VAIS1000 chỉ **1**,
+VIVOS **65** (chỉ phi thương mại), và 25hours_single **1** chưa rõ giấy phép nên không cho tải. Có **1.079 mục có thể
+tải** sau khi đồng ý điều kiện, nhưng **0 giọng/model được cài sẵn**. Chưa xác minh 1.000 người khác nhau giữa các
+dataset; không tính preset tốc độ/chất lượng thành người mới. Nếu chưa cài giọng nào thì vẫn thiếu **1.000 giọng đã
+cài** so với mục tiêu. Video có kiếm tiền không được mặc nhiên dùng VIVOS; cần xem giấy phép hoặc xin phép riêng.
+
+Verification sources are recorded in `video-studio/src/main/resources/voices/catalog.json`:
+[Piper release manifest](https://github.com/rhasspy/piper/blob/38917ffd8c0e219c6581d73e07b30ef1d572fce1/src/python_run/piper/voices.json),
+[matching official downloader](https://github.com/rhasspy/piper/blob/38917ffd8c0e219c6581d73e07b30ef1d572fce1/src/python_run/piper/download.py),
+[official configs](https://github.com/rhasspy/piper-samples/tree/da672d1157136d07365790f51da3357a17cf9650/configs)
+and [model cards](https://github.com/rhasspy/piper-samples/tree/da672d1157136d07365790f51da3357a17cf9650/samples).
+The configs corroborate every bundled speaker map and sample rate. The historical release uses Hugging Face
+`resolve/v1.0.0`, not `main`; downloads fail closed if its published sizes/checksums no longer match. Hugging Face
+was DNS-blocked during implementation, so no current HF commit SHA, ONNX SHA-256, real download or real Piper
+synthesis was verified here. Primary official GitHub copies were accessible. Installed packs and the offline
+catalog do not require Hugging Face to be reachable.
+
+Install just the models you want: select an entry, read the source/model card, license and restrictions, then explicitly
+accept them before downloading. The manager shows total bytes, progress, cancel and retry. A multi-speaker model is
+downloaded **once**, shared by every speaker; selecting another speaker does not duplicate its `.onnx`. Both model and
+config (and the model card when supplied) are staged below `.voice-downloads`, verified and atomically renamed into a
+model sub-folder. Body transfers have a ten-minute deadline per artifact; cancel/timeout closes the active response
+stream, including when the HTTP reader ignores interrupts. Failed/cancelled downloads are removed. Existing files are never overwritten: if a copy is damaged
+or incomplete, back it up and rename/remove it before retrying. Temporary download space plus the installed model's
+size must fit on the voices drive. Crashed-process staging directories can be removed from `.voice-downloads` while
+no download is running; `.voice-download-locks` contains only coordination files.
+
+The bundled catalog uses a pinned publisher-manifest commit, its documented release target, and authoritative checksums.
+The release tag is not a verified immutable HF commit. Where the upstream manifest
+provides only MD5, that checksum detects corruption but is **not a cryptographic authenticity guarantee**; HTTPS,
+fixed origins and the verified release target provide additional controls. Only reviewed Piper model/config/card files from
+`huggingface.co/rhasspy/piper-voices` may start downloads; redirects are limited to an explicit Hugging Face CDN
+allowlist. HTTP, arbitrary hosts, executables, traversal paths, changed sizes/hashes and unpinned manifests are rejected.
+There is no arbitrary catalog import, command execution or automatic bulk download. Metadata updates require an app
+update and source/license review. Existing installed packs remain usable offline if catalog loading or network access
+fails. No model binaries, Piper executable, FFmpeg or XTTS checkpoint are included in this PR.
+
+**English setup:** install a compatible Piper executable separately and choose it in **Tools...** (or set
+`ARCHITECT_PIPER`). Open **Manage voices**, filter language **en**, inspect VCTK (smaller English bootstrap) or
+LibriTTS, install that model
+and choose an installed speaker. **Preview voice** → **Write story** → **Narrate only** or **Export video** uses that
+same speaker. Install FFmpeg separately for MP4 output. Installing a voice model does **not** install Piper.
+
+**Cài tiếng Việt:** cài Piper riêng, chọn `piper.exe` trong **Tools...**; mở **Manage voices / Quản lý giọng**, lọc
+ngôn ngữ **vi**, chọn VAIS1000 (khởi đầu đơn giản, CC BY) hoặc VIVOS (chỉ phi thương mại), đọc giấy phép và giới hạn
+sử dụng trước khi đồng ý tải. Chọn speaker đã cài → **Preview
+voice** → **Write story** để tạo lời tiếng Việt → **Narrate only** hoặc **Export video**. Cần FFmpeg để xuất MP4.
+Model chưa tải không phải giọng đã cài; không có giọng nào được tự cài lên máy Windows của bạn. XTTS hiện chỉ clone
+tiếng Anh, **không hỗ trợ clone tiếng Việt**. Nếu ngôn ngữ câu chuyện không khớp giọng, hãy viết lại câu chuyện bằng
+giọng đã chọn; app báo lỗi thay vì đọc bằng speaker/ngôn ngữ khác.
+
+Multi-speaker configs are expanded using actual `num_speakers` and validated `speaker_id_map` values. Original model
+IDs retain speaker 0; other IDs are `<model-id>-speaker-<number>`. Preview and all narration/export paths pass Piper's
+documented numeric `--speaker` argument. Optional metadata `speaker_id` and `speaker_identity` are validated against
+the model config; `load()` returns that explicitly selected canonical speaker, while discovery always lists all
+speakers with stable IDs. Old eight-field voice records and single-speaker packs remain supported. No gender, accent,
+personality or expressive capability is inferred from names or IDs, and quality variants/speed presets are not
+counted as distinct people. In particular, **`vais1000` declares one speaker, not 1,000**.
+
+Rebuild only the changed video/desktop modules on **JDK 17**:
+`gradle :video-studio:test :architect-desktop:test :architect-desktop:installDist`.
+For a native app image, run `gradle :architect-desktop:packageApp` on the target OS. Reinstall the rebuilt desktop
+distribution; no Minecraft mod rebuild (and no JDK 25 Fabric build) is needed for these voice-library changes.
+
 A pack is rejected (and listed with the reason in the log / **Tools...**) when the config is missing, the model is empty
 or larger than 2 GB, the JSON is invalid or over 1 MB, the engine is not `piper`, the language or sample rate is invalid,
 the id is already used or the files point outside the voices folder.
@@ -693,7 +792,7 @@ the id is already used or the files point outside the voices folder.
 
 1. Install a compatible Coqui `tts` CLI separately and obtain an XTTS v2 model under its license. In **Tools...**, choose
    the executable (or use PATH / `ARCHITECT_XTTS`) and the local model folder containing `model.pth`, `config.json`, and
-   `vocab.json`. No model is downloaded by Video Studio; only use trusted models/configs.
+   `vocab.json`. No XTTS model is downloaded by Video Studio; only use trusted models/configs.
 2. Click **Clone voice from sample...**, then **Upload sample audio / Tải file audio mẫu**. Use audio you own or have
    permission to clone: a clear 6–60 second **16-bit PCM WAV**, mono or stereo, 8–96 kHz, at most 20 MB. Other formats,
    unreadable/truncated files, and out-of-range duration/size are rejected. Microphone recording is not available in this

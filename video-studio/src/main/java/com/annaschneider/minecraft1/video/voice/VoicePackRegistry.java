@@ -13,6 +13,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Collections;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -32,7 +35,7 @@ public final class VoicePackRegistry {
     public static final String DEFAULT_ENGINE = "piper";
     static final long MAX_JSON_BYTES = 1024 * 1024;
     static final long MAX_MODEL_BYTES = 2L * 1024 * 1024 * 1024;
-    static final int MAX_VOICES = 200;
+    static final int MAX_VOICES = 10000;
     private static final String ID_PATTERN = "[A-Za-z0-9][A-Za-z0-9._+-]{0,99}";
     private static final String LANGUAGE_PATTERN = "[A-Za-z]{2,3}(?:[_-][A-Za-z0-9]{2,8})*";
 
@@ -64,11 +67,17 @@ public final class VoicePackRegistry {
                 break;
             }
             try {
-                VoicePack pack = load(folder, model);
-                if (!ids.add(pack.id().toLowerCase(Locale.ROOT))) {
-                    throw new InvalidVoicePackException("a voice with the id '" + pack.id() + "' already exists");
+                List<VoicePack> speakers = loadSpeakers(folder, model);
+                for (VoicePack pack : speakers) {
+                    if (ids.contains(pack.id().toLowerCase(Locale.ROOT))) {
+                        throw new InvalidVoicePackException("a voice with the id '" + pack.id() + "' already exists");
+                    }
                 }
-                voices.add(pack);
+                if (voices.size() + speakers.size() > MAX_VOICES) {
+                    throw new InvalidVoicePackException("voice capacity of " + MAX_VOICES + " would be exceeded");
+                }
+                speakers.forEach(pack -> ids.add(pack.id().toLowerCase(Locale.ROOT)));
+                voices.addAll(speakers);
             } catch (InvalidVoicePackException ex) {
                 problems.add("Skipped voice " + folder.relativize(model) + ": " + ex.getMessage());
             }
@@ -77,9 +86,41 @@ public final class VoicePackRegistry {
         return new VoiceDiscovery(folder, voices, problems);
     }
 
-    /** Validates one model file and its companions. */
+    /**
+     * Validates one model file and its companions. Returns speaker zero by default, or the speaker selected by
+     * optional metadata {@code speaker_id}/{@code speaker_identity}, with the same stable ID as discovery.
+     */
     public VoicePack load(Path folder, Path model) throws InvalidVoicePackException {
+        return loadValidated(folder, model).selected();
+    }
+
+    /**
+     * Expands the actual speaker range while sharing the model and config files. Metadata speaker selection is
+     * validated but selects only {@link #load(Path, Path)}; discovery always binds the original model ID to speaker zero.
+     */
+    public List<VoicePack> loadSpeakers(Path folder, Path model) throws InvalidVoicePackException {
+        Loaded loaded = loadValidated(folder, model);
+        VoicePack base = loaded.selected();
+        List<VoicePack> speakers = new ArrayList<>();
+        for (Map.Entry<Integer, String> speaker : loaded.speakers().entrySet()) {
+            int speakerId = speaker.getKey();
+            String identity = speaker.getValue();
+            boolean multi = loaded.speakers().size() > 1;
+            speakers.add(new VoicePack(speakerId == 0 ? loaded.modelId() : loaded.modelId() + "-speaker-" + speakerId,
+                multi ? loaded.name() + " — " + (identity == null ? "Speaker " + speakerId : identity) : loaded.name(),
+                base.language(), base.engine(), base.model(), base.config(), base.sampleRate(), base.description(),
+                multi || base.speakerId() != null ? speakerId : null, identity));
+        }
+        return List.copyOf(speakers);
+    }
+
+    private record Loaded(VoicePack selected, String modelId, String name, Map<Integer, String> speakers) { }
+
+    private Loaded loadValidated(Path folder, Path model) throws InvalidVoicePackException {
         String fileName = model.getFileName().toString();
+        if (!fileName.toLowerCase(Locale.ROOT).endsWith(MODEL_EXTENSION)) {
+            throw new InvalidVoicePackException("the model file must end with " + MODEL_EXTENSION);
+        }
         String id = fileName.substring(0, fileName.length() - MODEL_EXTENSION.length());
         if (!id.matches(ID_PATTERN)) {
             throw new InvalidVoicePackException("the file name may only use letters, digits, '.', '_', '+' and '-'");
@@ -103,6 +144,7 @@ public final class VoicePackRegistry {
         }
         requireInside(folder, config, "config");
         JsonObject settings = readJson(config);
+        Map<Integer, String> speakers = validateSpeakerConfig(settings);
 
         JsonObject metadata = new JsonObject();
         Path metadataFile = model.resolveSibling(id + METADATA_SUFFIX);
@@ -145,8 +187,87 @@ public final class VoicePackRegistry {
         if (name.isBlank()) {
             name = defaultName(id, settings);
         }
-        return new VoicePack(id, name, language, engine, model.toAbsolutePath(), config.toAbsolutePath(), sampleRate,
-            clean(text(metadata, "description"), 200));
+        Integer speakerId = metadata.has("speaker_id") ? strictInteger(metadata.get("speaker_id"), "speaker_id") : null;
+        String identity = null;
+        if (metadata.has("speaker_identity")) {
+            JsonElement value = metadata.get("speaker_identity");
+            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString() || value.getAsString().isBlank()) {
+                throw new InvalidVoicePackException("speaker_identity must be a non-empty string");
+            }
+            identity = value.getAsString();
+            Integer mapped = null;
+            for (Map.Entry<Integer, String> entry : speakers.entrySet()) {
+                if (identity.equals(entry.getValue())) {
+                    mapped = entry.getKey();
+                }
+            }
+            if (mapped == null || speakerId != null && !speakerId.equals(mapped)) {
+                throw new InvalidVoicePackException("speaker_identity does not match a configured speaker_id");
+            }
+            speakerId = mapped;
+        }
+        if (speakerId != null && !speakers.containsKey(speakerId)) {
+            throw new InvalidVoicePackException("speaker_id is outside the configured speaker range");
+        }
+        if (speakerId == null && speakers.size() > 1) {
+            speakerId = 0;
+        }
+        if (identity == null) {
+            identity = speakers.get(speakerId == null ? 0 : speakerId);
+        }
+        String selectedId = speakerId != null && speakerId != 0 ? id + "-speaker-" + speakerId : id;
+        String selectedName = speakers.size() > 1 ? name + " — " + (identity == null ? "Speaker " + speakerId : identity) : name;
+        VoicePack selected = new VoicePack(selectedId, selectedName, language, engine, model.toAbsolutePath(), config.toAbsolutePath(),
+            sampleRate, clean(text(metadata, "description"), 200), speakerId, identity);
+        return new Loaded(selected, id, name, speakers);
+    }
+
+    /** Validates Piper speaker metadata; absent counts retain legacy single-speaker behavior. */
+    public static Map<Integer, String> validateSpeakerConfig(Path config) throws InvalidVoicePackException {
+        if (config == null || !Files.isRegularFile(config)) {
+            throw new InvalidVoicePackException("missing model config file: " + config);
+        }
+        return validateSpeakerConfig(readJson(config));
+    }
+
+    public static Map<Integer, String> validateSpeakerConfig(JsonObject settings) throws InvalidVoicePackException {
+        int count = settings.has("num_speakers") ? strictInteger(settings.get("num_speakers"), "num_speakers") : 1;
+        if (count < 1 || count > MAX_VOICES) {
+            throw new InvalidVoicePackException("num_speakers must be between 1 and " + MAX_VOICES);
+        }
+        Map<Integer, String> speakers = new LinkedHashMap<>();
+        for (int id = 0; id < count; id++) {
+            speakers.put(id, null);
+        }
+        if (settings.has("speaker_id_map")) {
+            JsonElement map = settings.get("speaker_id_map");
+            if (!map.isJsonObject()) {
+                throw new InvalidVoicePackException("speaker_id_map must be an object");
+            }
+            Set<Integer> ids = new HashSet<>();
+            for (Map.Entry<String, JsonElement> entry : map.getAsJsonObject().entrySet()) {
+                int id = strictInteger(entry.getValue(), "speaker_id_map ID");
+                if (entry.getKey().isBlank() || entry.getKey().matches(".*[\\p{Cntrl}\\p{Cf}].*")
+                    || id < 0 || id >= count || !ids.add(id)) {
+                    throw new InvalidVoicePackException("speaker_id_map must have non-empty identities and unique IDs in range 0.."
+                        + (count - 1));
+                }
+                speakers.put(id, entry.getKey());
+            }
+        }
+        return Collections.unmodifiableMap(speakers);
+    }
+
+    private static int strictInteger(JsonElement value, String field) throws InvalidVoicePackException {
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()
+            || !value.getAsString().matches("-?(0|[1-9][0-9]*)")) {
+            throw new InvalidVoicePackException(field + " must be an integer");
+        }
+        try {
+            return Integer.parseInt(value.getAsString());
+        } catch (NumberFormatException ex) {
+            throw new InvalidVoicePackException(field + " must be an integer within range");
+        }
     }
 
     private static String defaultName(String id, JsonObject settings) {

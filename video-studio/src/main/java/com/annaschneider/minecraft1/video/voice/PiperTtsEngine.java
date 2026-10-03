@@ -7,6 +7,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -46,12 +48,36 @@ public final class PiperTtsEngine implements TtsEngine {
         if (problem.isPresent()) {
             throw new NarrationException(problem.get());
         }
-        String line = text.replaceAll("[\\p{Cntrl}\\p{Cf}]", " ").replaceAll("\\s+", " ").strip();
+        if (!ID.equals(voice.engine())) {
+            throw new NarrationException("Piper cannot synthesize a voice for backend '" + voice.engine() + "'.");
+        }
+        if (voice.model() == null || !Files.isRegularFile(voice.model())) {
+            throw new NarrationException("Missing Piper model file: " + voice.model());
+        }
+        Map<Integer, String> speakers;
+        try {
+            speakers = VoicePackRegistry.validateSpeakerConfig(voice.config());
+        } catch (InvalidVoicePackException ex) {
+            throw new NarrationException("Invalid Piper model config: " + ex.getMessage(), ex);
+        }
+        if (speakers.size() > 1 && voice.speakerId() == null) {
+            throw new NarrationException("A speaker ID is required for this multi-speaker Piper model; reload the voices.");
+        }
+        int speaker = voice.speakerId() == null ? 0 : voice.speakerId();
+        if (!speakers.containsKey(speaker)
+            || voice.speakerIdentity() != null && !voice.speakerIdentity().equals(speakers.get(speaker))) {
+            throw new NarrationException("Selected speaker no longer matches the Piper model config; reload the voices.");
+        }
+        String line = text == null ? "" : text.replaceAll("[\\p{Cntrl}\\p{Cf}]", " ").replaceAll("\\s+", " ").strip();
         if (line.isEmpty()) {
             throw new NarrationException("Nothing to say: the narration text is empty.");
         }
-        List<String> command = List.of(executable.toString(), "--model", voice.model().toString(), "--config",
-            voice.config().toString(), "--output_file", output.toString());
+        List<String> command = new ArrayList<>(List.of(executable.toString(), "--model", voice.model().toString(), "--config",
+            voice.config().toString()));
+        if (speakers.size() > 1 || voice.speakerId() != null) {
+            command.addAll(List.of("--speaker", Integer.toString(speaker)));
+        }
+        command.addAll(List.of("--output_file", output.toString()));
         ProcessRunner.Result result;
         try {
             result = runner.run(command, line + "\n", TIMEOUT);
