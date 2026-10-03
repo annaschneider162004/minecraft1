@@ -13,7 +13,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 
-/** Narration stage: speaks every scene of a storyboard with the chosen voice, one WAV per scene. */
+/**
+ * Narration stage: speaks every scene of a storyboard with the chosen voice, one WAV per scene. The voice is a
+ * {@link VoiceSelection}, so a speaker of a multi-speaker model is used exactly as selected; when the engine cannot
+ * speak it, a clear error is raised instead of falling back to another voice.
+ */
 public final class Narrator {
     private final Map<String, TtsEngine> engines = new LinkedHashMap<>();
 
@@ -29,25 +33,37 @@ public final class Narrator {
 
     /** Why {@code voice} cannot be spoken right now, or empty when it can. */
     public Optional<String> unavailableReason(VoicePack voice) {
-        TtsEngine engine = engines.get(voice.engine());
+        return unavailableReason(VoiceSelection.of(voice));
+    }
+
+    /** Why exactly {@code selection} (voice and speaker) cannot be spoken right now, or empty when it can. */
+    public Optional<String> unavailableReason(VoiceSelection selection) {
+        TtsEngine engine = engines.get(selection.engine());
         if (engine == null) {
-            return Optional.of("Voice '" + voice.name() + "' needs the '" + voice.engine() + "' engine, which this app does not have.");
+            return Optional.of("Voice '" + selection.name() + "' needs the '" + selection.engine()
+                + "' engine, which this app does not have.");
         }
-        return engine.unavailableReason();
+        Optional<String> missing = engine.unavailableReason();
+        return missing.isPresent() ? missing : engine.unsupportedReason(selection);
     }
 
     public List<NarrationClip> narrate(Storyboard storyboard, VoicePack voice, Path folder, Consumer<String> progress)
         throws NarrationException {
-        TtsEngine engine = engine(voice);
+        return narrate(storyboard, VoiceSelection.of(voice), folder, progress);
+    }
+
+    public List<NarrationClip> narrate(Storyboard storyboard, VoiceSelection selection, Path folder, Consumer<String> progress)
+        throws NarrationException {
+        TtsEngine engine = engine(selection);
         List<NarrationClip> clips = new ArrayList<>();
         for (Scene scene : storyboard.scenes()) {
             if (scene.narration().isBlank()) {
                 continue;
             }
             progress.accept(String.format(Locale.ROOT, "Speaking scene %d of %d with %s...", scene.index() + 1,
-                storyboard.scenes().size(), voice.name()));
+                storyboard.scenes().size(), selection.name()));
             Path wav = folder.resolve(String.format(Locale.ROOT, "narration-scene-%02d.wav", scene.index() + 1));
-            engine.synthesize(voice, scene.narration(), wav);
+            engine.synthesize(selection, scene.narration(), wav);
             clips.add(new NarrationClip(scene.index(), wav, WavInfo.seconds(wav)));
         }
         return clips;
@@ -55,8 +71,13 @@ public final class Narrator {
 
     /** Speaks a short sample so the user can hear the voice. */
     public NarrationClip preview(VoicePack voice, String text, Path wav) throws NarrationException {
-        String sample = text == null || text.isBlank() ? previewText(voice.storyLanguage()) : text;
-        engine(voice).synthesize(voice, sample, wav);
+        return preview(VoiceSelection.of(voice), text, wav);
+    }
+
+    /** Speaks a short sample with exactly the selected voice and speaker. */
+    public NarrationClip preview(VoiceSelection selection, String text, Path wav) throws NarrationException {
+        String sample = text == null || text.isBlank() ? previewText(selection.storyLanguage()) : text;
+        engine(selection).synthesize(selection, sample, wav);
         return new NarrationClip(-1, wav, WavInfo.seconds(wav));
     }
 
@@ -66,11 +87,11 @@ public final class Narrator {
             : "Hello! This is the voice that will narrate your Minecraft build video.";
     }
 
-    private TtsEngine engine(VoicePack voice) throws NarrationException {
-        Optional<String> problem = unavailableReason(voice);
+    private TtsEngine engine(VoiceSelection selection) throws NarrationException {
+        Optional<String> problem = unavailableReason(selection);
         if (problem.isPresent()) {
             throw new NarrationException(problem.get());
         }
-        return engines.get(voice.engine());
+        return engines.get(selection.engine());
     }
 }

@@ -5,6 +5,7 @@ import com.annaschneider.minecraft1.video.story.StoryRequest;
 import com.annaschneider.minecraft1.video.story.StoryService;
 import com.annaschneider.minecraft1.video.voice.Narrator;
 import com.annaschneider.minecraft1.video.voice.PiperTtsEngine;
+import com.annaschneider.minecraft1.video.voice.VoiceSelection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -91,7 +92,7 @@ class VideoPipelineTest {
         VideoPipeline pipeline = new VideoPipeline(StoryService.templatesOnly(), new Narrator(List.of()), Optional::empty);
         Storyboard story = pipeline.writeStory(new StoryRequest("castle", null, null, null)).storyboard();
         VideoExportException error = assertThrows(VideoExportException.class, () -> pipeline.export(
-            new ExportRequest(story, null, List.of(), null, dir, "x", null, false), message -> { }));
+            new ExportRequest(story, null, List.of(), (VoiceSelection) null, dir, "x", null, false), message -> { }));
         assertTrue(error.getMessage().contains("FFmpeg was not found"));
         assertTrue(error.getMessage().contains("https://ffmpeg.org"));
     }
@@ -104,7 +105,7 @@ class VideoPipelineTest {
         VideoPipeline pipeline = pipeline(ffmpeg, new TestSupport.FakeTts(), temp);
         Storyboard story = pipeline.writeStory(new StoryRequest("castle", null, null, null)).storyboard();
         VideoExportException error = assertThrows(VideoExportException.class, () -> pipeline.export(
-            new ExportRequest(story, null, List.of(), null, dir.resolve("out"), "x", null, false), message -> { }));
+            new ExportRequest(story, null, List.of(), (VoiceSelection) null, dir.resolve("out"), "x", null, false), message -> { }));
         assertTrue(error.getMessage().contains("Unknown encoder 'libx264'"), error.getMessage());
         try (Stream<Path> left = Files.list(temp)) {
             assertEquals(0, left.count());
