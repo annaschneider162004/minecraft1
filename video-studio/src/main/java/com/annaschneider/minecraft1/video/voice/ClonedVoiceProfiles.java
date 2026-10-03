@@ -21,10 +21,10 @@ import java.util.stream.Stream;
 public final class ClonedVoiceProfiles {
     public static final String SUFFIX = ".cloned.json";
     public static final long MAX_SAMPLE_BYTES = 20L * 1024 * 1024;
-    public static final String CHECKING = "Checking sample... / Đang kiểm tra mẫu...";
-    public static final String CREATING = "Creating voice profile... / Đang tạo voice profile...";
-    public static final String READY = "Voice profile ready / Voice profile đã sẵn sàng";
-    public static final String FAILED = "Voice profile creation failed: ";
+    public static final String CHECKING = "Đang kiểm tra mẫu WAV...";
+    public static final String CREATING = "Đang tạo hồ sơ giọng đọc...";
+    public static final String READY = "Hồ sơ giọng đọc đã sẵn sàng";
+    public static final String FAILED = "Tạo hồ sơ giọng đọc thất bại: ";
     private final TtsEngine engine;
 
     public ClonedVoiceProfiles(TtsEngine engine) {
@@ -35,14 +35,14 @@ public final class ClonedVoiceProfiles {
     public static void validateSample(Path sample) throws NarrationException {
         try {
             if (!sample.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".wav")) {
-                throw new NarrationException("Unsupported sample format. Upload a PCM WAV file (.wav).");
+                throw new NarrationException("Định dạng mẫu không được hỗ trợ. Chọn WAV PCM (.wav); âm thanh mẫu không phải gói giọng .onnx.");
             }
             if (!Files.isRegularFile(sample) || !Files.isReadable(sample)) {
-                throw new NarrationException("The sample is not a readable audio file.");
+                throw new NarrationException("Không thể đọc tệp âm thanh mẫu.");
             }
             long size = Files.size(sample);
             if (size <= 44 || size > MAX_SAMPLE_BYTES) {
-                throw new NarrationException("The sample must contain audio and be no larger than 20 MB.");
+                throw new NarrationException("Mẫu phải chứa âm thanh và không lớn hơn 20 MB.");
             }
             try (AudioInputStream audio = AudioSystem.getAudioInputStream(sample.toFile())) {
                 AudioFormat format = audio.getFormat();
@@ -50,11 +50,11 @@ public final class ClonedVoiceProfiles {
                     || format.getSampleSizeInBits() != 16 || format.getChannels() < 1 || format.getChannels() > 2
                     || format.getSampleRate() < 8000 || format.getSampleRate() > 96000
                     || format.getFrameSize() != 2 * format.getChannels() || audio.getFrameLength() <= 0) {
-                    throw new NarrationException("Use 16-bit PCM WAV, mono or stereo, at 8–96 kHz.");
+                    throw new NarrationException("Dùng WAV PCM 16-bit, mono hoặc stereo, tần số 8–96 kHz.");
                 }
                 double seconds = audio.getFrameLength() / (double) format.getFrameRate();
                 if (!Double.isFinite(seconds) || seconds < 6 || seconds > 60) {
-                    throw new NarrationException("The sample must be between 6 and 60 seconds long.");
+                    throw new NarrationException("Mẫu WAV phải dài từ 6 đến 60 giây.");
                 }
                 byte[] buffer = new byte[8192];
                 long bytes = 0;
@@ -62,15 +62,15 @@ public final class ClonedVoiceProfiles {
                 while ((count = audio.read(buffer)) != -1) {
                     bytes += count;
                     if (bytes > MAX_SAMPLE_BYTES) {
-                        throw new NarrationException("The decoded sample is larger than 20 MB.");
+                        throw new NarrationException("Âm thanh mẫu sau giải mã lớn hơn 20 MB.");
                     }
                 }
                 if (bytes != audio.getFrameLength() * format.getFrameSize()) {
-                    throw new NarrationException("The sample audio is truncated or unreadable.");
+                    throw new NarrationException("Âm thanh mẫu bị cắt cụt hoặc không đọc được.");
                 }
             }
         } catch (IOException | UnsupportedAudioFileException ex) {
-            throw new NarrationException("The sample is not readable WAV audio: " + ex.getMessage(), ex);
+            throw new NarrationException("Không thể đọc âm thanh WAV của mẫu: " + ex.getMessage(), ex);
         }
     }
 
@@ -80,7 +80,7 @@ public final class ClonedVoiceProfiles {
         }
         String label = name == null ? "" : name.replaceAll("[\\p{Cntrl}\\p{Cf}]", " ").strip();
         if (label.isBlank() || label.length() > 60) {
-            throw new NarrationException("Choose a voice profile name (1–60 characters).");
+            throw new NarrationException("Đặt tên hồ sơ giọng đọc (1–60 ký tự).");
         }
         progress.accept(CHECKING);
         validateSample(sample);
@@ -107,7 +107,7 @@ public final class ClonedVoiceProfiles {
             progress.accept(READY);
             return voice;
         } catch (IOException ex) {
-            throw new NarrationException("Cannot save the voice profile: " + ex.getMessage(), ex);
+            throw new NarrationException("Không thể lưu hồ sơ giọng đọc: " + ex.getMessage(), ex);
         } finally {
             if (!ready) {
                 delete(metadata);
@@ -132,29 +132,29 @@ public final class ClonedVoiceProfiles {
                     String id = fileName.substring(0, fileName.length() - SUFFIX.length());
                     if (!id.matches("clone-[a-f0-9-]{36}") || Files.size(metadata) > 4096
                         || !metadata.toRealPath().startsWith(folder.toRealPath())) {
-                        throw new NarrationException("Invalid profile metadata.");
+                        throw new NarrationException("Thông tin hồ sơ không hợp lệ.");
                     }
                     JsonObject json = JsonParser.parseString(Files.readString(metadata)).getAsJsonObject();
                     if (!XttsTtsEngine.ID.equals(json.get("engine").getAsString())
                         || !"en".equals(json.get("language").getAsString())) {
-                        throw new NarrationException("Unsupported cloned voice engine or language.");
+                        throw new NarrationException("Backend hoặc ngôn ngữ clone không được hỗ trợ; hiện chỉ hỗ trợ XTTS tiếng Anh.");
                     }
                     String name = json.get("name").getAsString();
                     if (name.isBlank() || name.length() > 60 || name.matches("(?s).*[\\p{Cntrl}\\p{Cf}].*")) {
-                        throw new NarrationException("Invalid voice profile name.");
+                        throw new NarrationException("Tên hồ sơ giọng đọc không hợp lệ.");
                     }
                     Path sample = folder.resolve(id + ".sample.wav");
                     if (!sample.toRealPath().startsWith(folder.toRealPath())) {
-                        throw new NarrationException("The sample links outside the voices folder.");
+                        throw new NarrationException("Mẫu liên kết ra ngoài thư mục giọng đọc (outside voices folder).");
                     }
                     validateSample(sample);
                     voices.add(pack(id, name, sample, metadata));
                 } catch (IOException | NarrationException | RuntimeException ex) {
-                    problems.add("Skipped voice profile " + metadata.getFileName() + ": " + ex.getMessage());
+                    problems.add("Bỏ qua hồ sơ giọng đọc " + metadata.getFileName() + ": " + ex.getMessage());
                 }
             }
         } catch (IOException ex) {
-            problems.add("Cannot read local voice profiles: " + ex.getMessage());
+            problems.add("Không thể đọc hồ sơ giọng cục bộ: " + ex.getMessage());
         }
         return new VoiceDiscovery(folder, voices, problems);
     }

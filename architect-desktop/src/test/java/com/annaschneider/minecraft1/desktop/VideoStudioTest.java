@@ -11,6 +11,8 @@ import com.annaschneider.minecraft1.video.ProcessRunner;
 import com.annaschneider.minecraft1.video.voice.VoiceCatalogEntry;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
 import com.annaschneider.minecraft1.video.voice.VoiceFilter;
+import com.annaschneider.minecraft1.video.voice.NarrationAudioOptions;
+import com.annaschneider.minecraft1.video.voice.VoiceInstallException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class VideoStudioTest {
     @Test
@@ -85,6 +88,19 @@ class VideoStudioTest {
                 assertEquals("en_US-test-medium", settings.voiceId());
                 voices.setSelectedIndex(1);
                 assertEquals(id, settings.voiceId());
+                voices.setSelectedIndex(0);
+                assertEquals("", settings.voiceId());
+                invoke(window.get(), "refreshVoices");
+            });
+            settle(window.get());
+            SwingUtilities.invokeAndWait(() -> {
+                assertEquals("", settings.voiceId(), "refresh preserves explicit no narration");
+                assertEquals(0, voices.getSelectedIndex());
+                assertEquals("Nghe thử giọng", ((javax.swing.JButton) field(window.get(), "previewButton")).getText());
+                ((javax.swing.JSpinner) field(window.get(), "speedSpinner")).setValue(1.5);
+                ((JComboBox<?>) field(window.get(), "effectBox")).setSelectedItem(NarrationAudioOptions.Effect.SOFT_ECHO);
+                assertEquals(1.5, settings.narrationSpeed());
+                assertEquals(NarrationAudioOptions.Effect.SOFT_ECHO, settings.narrationEffect());
             });
         } finally {
             if (window.get() != null) {
@@ -117,6 +133,17 @@ class VideoStudioTest {
             var field = VideoStudioWindow.class.getDeclaredField(name);
             field.setAccessible(true);
             return field.get(window);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError(ex);
+        }
+
+    }
+
+    private static void invoke(VideoStudioWindow window, String name) {
+        try {
+            var method = VideoStudioWindow.class.getDeclaredMethod(name);
+            method.setAccessible(true);
+            method.invoke(window);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError(ex);
         }
@@ -173,6 +200,7 @@ class VideoStudioTest {
             assertEquals(VideoStudioSettings.defaultOutputFolder(), settings.outputFolder());
             assertEquals(ExportMode.AUTO_EXPORT, settings.exportMode());
             assertEquals(VideoStudioSettings.DEFAULT_RECORD_SECONDS, settings.recordSeconds());
+            assertEquals(NarrationAudioOptions.defaults(), settings.narrationAudioOptions());
             settings.setExportMode(ExportMode.NARRATE_ONLY);
             settings.setRecordSeconds(1_000_000);
             settings.setFfmpegPath("  C:/ffmpeg/bin/ffmpeg.exe ");
@@ -181,6 +209,8 @@ class VideoStudioTest {
             settings.setCloningPath(" /data/tools/tts ");
             settings.setCloningModelFolder("/data/models/xtts-v2");
             settings.setUseLocalAi(true);
+            settings.setNarrationSpeed(1.7);
+            settings.setNarrationEffect(NarrationAudioOptions.Effect.SOFT_ECHO);
             settings.setOutputFolder("");
             node.flush();
             VideoStudioSettings reopened = new VideoStudioSettings(Preferences.userRoot().node(node.absolutePath()));
@@ -193,8 +223,18 @@ class VideoStudioTest {
             assertEquals(VideoStudioSettings.defaultOutputFolder(), reopened.outputFolder());
             assertEquals(ExportMode.NARRATE_ONLY, reopened.exportMode());
             assertEquals(3600, reopened.recordSeconds());
+            assertEquals(new NarrationAudioOptions(1.7, NarrationAudioOptions.Effect.SOFT_ECHO), reopened.narrationAudioOptions());
             node.put("exportMode", "BOGUS");
             assertEquals(ExportMode.AUTO_EXPORT, reopened.exportMode());
+            node.putDouble("narrationSpeed", Double.NaN);
+            node.put("narrationEffect", "BOGUS");
+            assertEquals(NarrationAudioOptions.defaults(), reopened.narrationAudioOptions());
+            reopened.setNarrationSpeed(0.1);
+            assertEquals(0.5, reopened.narrationSpeed());
+            reopened.setNarrationSpeed(8);
+            assertEquals(2.0, reopened.narrationSpeed());
+            reopened.setNarrationSpeed(Double.POSITIVE_INFINITY);
+            assertEquals(1.0, reopened.narrationSpeed());
         } finally {
             node.removeNode();
         }
@@ -217,12 +257,12 @@ class VideoStudioTest {
             VoiceDiscovery found = studio.discoverVoices();
             assertTrue(found.voices().isEmpty());
             String report = String.join("\n", studio.diagnostics(found));
-            assertTrue(report.contains("FFmpeg: NOT FOUND"), report);
-            assertTrue(report.contains("Piper voice engine: NOT FOUND"), report);
-            assertTrue(report.contains("Voice cloning unavailable"), report);
+            assertTrue(report.contains("FFmpeg: KHÔNG TÌM THẤY"), report);
+            assertTrue(report.contains("Bộ đọc Piper: KHÔNG TÌM THẤY"), report);
+            assertTrue(report.contains("Nhân bản giọng chưa sẵn sàng"), report);
             assertTrue(report.contains("lonely.onnx: missing config file"), report);
-            assertTrue(report.contains("built-in templates"), report);
-            assertTrue(report.contains("Screen recording: NOT AVAILABLE"), report);
+            assertTrue(report.contains("mẫu có sẵn"), report);
+            assertTrue(report.contains("Ghi màn hình: CHƯA SẴN SÀNG"), report);
             assertTrue(studio.flow() != null);
             assertTrue(studio.narrator().supportedEngines().contains("piper"));
         } finally {
@@ -234,12 +274,41 @@ class VideoStudioTest {
     void replayVideosFolderSitsNextToTheGameConfig() {
         Path link = Path.of("/games/.minecraft/config/architect/desktop-link.json");
         assertEquals(Path.of("/games/.minecraft/replay_videos"), VideoStudio.replayVideosFolder(link));
-        assertTrue(VideoStudioWindow.helpHtml().contains("voices folder"));
+        assertTrue(VideoStudioWindow.helpHtml().contains("thư mục giọng"));
         for (ExportMode mode : ExportMode.values()) {
-            assertTrue(VideoStudioWindow.helpHtml().contains(mode.label()), mode.label());
+            assertTrue(VideoStudioWindow.helpHtml().contains(DesktopVoiceSupport.label(mode)), mode.label());
         }
-        assertTrue(VideoStudioWindow.helpHtml().contains("Waiting for remaining job..."));
-        assertTrue(VideoStudioWindow.helpHtml().contains("Clone voice from sample..."));
+        assertTrue(VideoStudioWindow.helpHtml().contains("Chờ tác vụ còn lại"));
+        assertTrue(VideoStudioWindow.helpHtml().contains("Nhân bản giọng từ WAV"));
+        assertTrue(VideoStudioWindow.helpHtml().contains("không hỗ trợ nhân bản tiếng Việt"));
+        assertTrue(VideoStudioWindow.helpHtml().contains("0,5–2,0×"));
+    }
+
+    @Test
+    void controllerImportsLocalPackWithoutChangingVoiceSelection(@TempDir Path dir) throws Exception {
+        Preferences node = Preferences.userRoot().node("architect-video-import-test-" + UUID.randomUUID());
+        try {
+            Path source = Files.createDirectory(dir.resolve("source"));
+            Path model = Files.write(source.resolve("vi_VN-local.onnx"), new byte[] {8, 1, 2});
+            Path config = Files.writeString(source.resolve("vi_VN-local.onnx.json"),
+                "{\"audio\":{\"sample_rate\":22050},\"language\":{\"code\":\"vi_VN\"}}");
+            VideoStudioSettings settings = new VideoStudioSettings(node);
+            settings.setVoicesFolder(dir.resolve("voices").toString());
+            settings.setVoiceId("existing-selection");
+            ProcessRunner never = (command, stdin, timeout) -> { throw new AssertionError("import must not run a backend"); };
+            VideoStudio studio = new VideoStudio(settings, new ExecutableLocator("", false, name -> null), never);
+            var imported = studio.importVoicePack(model, config, "Giọng của tôi", "Thuyết minh công trình");
+            assertEquals("Giọng của tôi", imported.name());
+            assertEquals("existing-selection", settings.voiceId());
+            var discovered = studio.discoverVoices();
+            assertEquals(1, discovered.voices().size());
+            assertTrue(studio.voiceCatalog(discovered).find(imported.id()).isPresent());
+            assertThrows(VoiceInstallException.class, () -> studio.importVoicePack(model, config, "", ""));
+            assertEquals("existing-selection", settings.voiceId());
+            assertEquals(1, studio.discoverVoices().voices().size(), "failed import preserves installed pack");
+        } finally {
+            node.removeNode();
+        }
     }
 
     private static JobStatus job(long id, String state, double percent, long blocks) {
