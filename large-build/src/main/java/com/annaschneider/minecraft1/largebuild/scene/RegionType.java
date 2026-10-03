@@ -26,7 +26,8 @@ public enum RegionType {
     LEDGE("ledge"),
     PLANTING("planting"),
     GROVE("grove"),
-    POOL("pool");
+    POOL("pool"),
+    CLEARANCE("clearance");
 
     private final String id;
 

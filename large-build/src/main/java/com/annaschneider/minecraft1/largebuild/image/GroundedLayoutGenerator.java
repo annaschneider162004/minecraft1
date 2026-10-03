@@ -121,9 +121,10 @@ final class GroundedLayoutGenerator implements LayoutGenerator {
             b.ground(x, 0, band, width, height, false);
             b.road(x + (level == 0 ? 0 : rise), height + 1, 1,
                 band - (level == 0 ? 0 : rise), 4);
+            b.road(x + band - 4, height + 1, 1, 3, width - 1);
             for (int row = 0; row < rows; row++) {
                 b.house(x + rise + 3, height + 1, row * 20 + 9);
-                b.road(x + rise + 6, height + 1, 5, 3, row * 20 + 4);
+                b.road(x + rise + 6, height + 1, row * 20 + 6, band - rise - 7, 3);
             }
             if (level > 0) {
                 // Ramp clears the riser's solid ground and reaches its street at one block per step.
@@ -200,10 +201,15 @@ final class GroundedLayoutGenerator implements LayoutGenerator {
             if (features.isEmpty()) return;
             SceneRegion access = regions.stream().filter(r -> r.type() == RegionType.ROAD).findFirst().orElseThrow();
             int minX = regions.stream().mapToInt(SceneRegion::x).min().orElseThrow();
+            int north = regions.stream().mapToInt(SceneRegion::z).min().orElseThrow() - 4;
             int x = minX - features.size() * 10 - 5, y = access.y(), z = access.z() + 8;
             // Separate supported sites outside the occupied footprint; do not cover streets or building doors.
-            ground(x, access.z(), access.x() - x + 3, 15, y - 1, false);
-            add(RegionType.ROAD, x, y, access.z(), access.x() - x + 3, 3, 3);
+            ground(x, north, access.x() - x + 3, access.z() + 15 - north, y - 1, false);
+            // Circulation goes around the north edge, preserving cliff backing instead of tunneling through it.
+            accessRoad(x, y, access.z(), features.size() * 10 - 3, 3);
+            accessRoad(x + 3, y, north, 3, access.z() - north + 3);
+            accessRoad(x + 3, y, north, access.x() - x, 3);
+            accessRoad(access.x(), y, north, 3, access.z() - north + 3);
             for (String feature : features) {
                 road(x + 3, y, access.z() + 3, 3, 5);
                 switch (feature) {
@@ -220,6 +226,10 @@ final class GroundedLayoutGenerator implements LayoutGenerator {
                 }
                 x += 10;
             }
+        }
+        void accessRoad(int x, int y, int z, int sx, int sz) {
+            road(x, y, z, sx, sz);
+            add(RegionType.CLEARANCE, x, y + 1, z, sx, 2, sz);
         }
         boolean enabled(String feature) {
             return prompt.features().contains(feature) && style.supportedFeatures().contains(feature)

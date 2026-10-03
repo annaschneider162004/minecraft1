@@ -33,7 +33,7 @@ public final class RegionGeneratorFactory {
                 case GARDEN -> new GardenGenerator(region.sizeX() / 2, region.seed());
                 case CHERRY_TREES -> new CherryGroveGenerator(region.sizeX() / 2, region.seed());
                 case CLOUDS -> new CloudLayerGenerator(region.sizeX(), region.sizeZ(), Math.min(8, region.sizeY()), 22, region.seed());
-                case FOUNDATION, BUILDING, TOWER, WALL, ROAD, STAIR, ROCK, LEDGE, PLANTING, GROVE, POOL ->
+                case FOUNDATION, BUILDING, TOWER, WALL, ROAD, STAIR, ROCK, LEDGE, PLANTING, GROVE, POOL, CLEARANCE ->
                     new GroundedStructureGenerator(region, style);
             };
         } catch (IllegalArgumentException ex) {

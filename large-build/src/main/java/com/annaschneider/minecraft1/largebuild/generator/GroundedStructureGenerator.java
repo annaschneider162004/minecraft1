@@ -25,6 +25,7 @@ public final class GroundedStructureGenerator implements StructureGenerator {
             case LEDGE, WALL -> Set.of(style.masonry());
             case ROAD -> region.sizeY() > 1 ? Set.of(style.road(), "minecraft:air") : Set.of(style.road());
             case STAIR -> Set.of(style.masonry(), "minecraft:air");
+            case CLEARANCE -> Set.of("minecraft:air");
             case BUILDING, TOWER -> Set.copyOf(java.util.List.of(style.masonry(), style.timber(), style.roof(),
                 "minecraft:glass", "minecraft:air"));
             case POOL -> Set.of(style.masonry(), "minecraft:water");
@@ -44,6 +45,7 @@ public final class GroundedStructureGenerator implements StructureGenerator {
             case LEDGE -> style.masonry();
             case ROAD -> y == 0 ? style.road() : "minecraft:air";
             case STAIR -> y <= Math.min(sy - 1, x) ? style.masonry() : "minecraft:air";
+            case CLEARANCE -> "minecraft:air";
             case POOL -> y == 0 || x == 0 || z == 0 || x == sx - 1 || z == sz - 1
                 ? style.masonry() : "minecraft:water";
             case PLANTING -> y == 0 ? (style == StylePreset.DESERT ? style.ground() : "minecraft:grass_block")

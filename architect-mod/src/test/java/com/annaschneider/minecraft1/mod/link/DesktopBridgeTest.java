@@ -240,6 +240,7 @@ class DesktopBridgeTest {
             assertTrue(plan.plan().regions().stream().map(RegionBox::type).anyMatch("waterfall"::equals));
             assertFalse(plan.plan().regions().stream().map(RegionBox::type).anyMatch("island"::equals));
             assertFalse(plan.plan().regions().stream().map(RegionBox::type).anyMatch("palace"::equals));
+            assertFalse(plan.plan().regions().stream().map(RegionBox::type).anyMatch("clearance"::equals));
             var saved = engine.loadPlan("my-town");
             assertEquals(-42L, saved.seed());
             assertEquals("medieval", saved.style());

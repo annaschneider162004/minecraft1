@@ -16,8 +16,9 @@ import java.util.Objects;
  *   <li>GARDEN / CHERRY_TREES: sizeX = diameter</li>
  *   <li>CLOUDS: sizeX x sizeZ = area starting at the origin, sizeY = thickness</li>
  *   <li>Grounded primitives (FOUNDATION, BUILDING, TOWER, WALL, ROAD, STAIR, ROCK, LEDGE,
- *       PLANTING, GROVE, POOL): rectangular sizeX x sizeY x sizeZ, originating at their minimum corner.
+ *       PLANTING, GROVE, POOL, CLEARANCE): rectangular sizeX x sizeY x sizeZ, originating at their minimum corner.
  *       STAIR ascends one block per local +X step and clears space above the treads.</li>
+ *   <li>CLEARANCE explicitly clears air above access routes, without changing their floor elevation.</li>
  * </ul>
  */
 public record SceneRegion(

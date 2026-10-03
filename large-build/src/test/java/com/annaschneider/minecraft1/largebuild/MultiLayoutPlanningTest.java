@@ -24,17 +24,23 @@ class MultiLayoutPlanningTest {
     private ScenePlan plan(LayoutType layout, int scale, long seed) {
         return planner.planText("neutral village", options(layout, scale, seed));
     }
+    private static Map<LayoutType, Double> only(Map<LayoutType, Double> selected) {
+        EnumMap<LayoutType, Double> weights = new EnumMap<>(LayoutType.class);
+        for (LayoutType layout : LayoutGeneratorRegistry.ORDER) weights.put(layout, 0.0);
+        weights.putAll(selected);
+        return weights;
+    }
 
     @Test void distinctStructuralArchetypesAndStableRegistry() {
         assertEquals(LayoutGeneratorRegistry.ORDER, new LayoutGeneratorRegistry().generators().stream().map(LayoutGenerator::layout).toList());
-        Set<List<SceneRegion>> geometries = new HashSet<>();
+        Set<List<Geometry>> geometries = new HashSet<>();
         for (LayoutType layout : LayoutGeneratorRegistry.ORDER) {
             ScenePlan plan = plan(layout, 2, 44);
             assertEquals(layout, plan.metadata().layout());
             assertTrue(plan.regions().stream().anyMatch(r -> r.type() == RegionType.BUILDING));
             assertTrue(plan.regions().stream().anyMatch(r -> r.type() == RegionType.ROAD));
             assertFalse(plan.regions().stream().anyMatch(r -> r.type() == RegionType.ISLAND || r.type() == RegionType.PALACE_CORE));
-            assertTrue(geometries.add(plan.regions()));
+            assertTrue(geometries.add(geometry(plan)));
         }
         Bounds line = compiler.compile(plan(LayoutType.LINEAR, 2, 44), 100_000).bounds();
         assertTrue(line.sizeX() > line.sizeZ() * 3);
@@ -42,6 +48,9 @@ class MultiLayoutPlanningTest {
         assertTrue(plan(LayoutType.CLIFF, 2, 44).regions().stream().anyMatch(r -> r.type() == RegionType.LEDGE));
         Bounds cliff = compiler.compile(plan(LayoutType.CLIFF, 2, 44), 100_000).bounds();
         assertTrue(cliff.sizeY() > cliff.sizeX() * 2, "cliff must have a vertical facade, not sloped terraces");
+        Bounds terraces = compiler.compile(plan(LayoutType.TERRACED, 2, 44), 100_000).bounds();
+        assertTrue(cliff.sizeY() > terraces.sizeY() * 2);
+        assertTrue(cliff.sizeX() < terraces.sizeX());
         assertEquals(1, plan(LayoutType.CLIFF, 2, 44).regions().stream().filter(r -> r.type() == RegionType.BUILDING)
             .map(SceneRegion::x).distinct().count());
         assertTrue(plan(LayoutType.CLIFF, 2, 44).regions().stream().anyMatch(r -> r.type() == RegionType.STAIR && r.rotation() != 0));
@@ -57,7 +66,8 @@ class MultiLayoutPlanningTest {
             ScenePlan first = plan(layout, 2, 567);
             assertEquals(first, plan(layout, 2, 567));
             assertEquals(gson.toJson(first), gson.toJson(plan(layout, 2, 567)));
-            assertNotEquals(first.regions(), plan(layout, 2, 568).regions());
+            assertNotEquals(geometry(first), geometry(plan(layout, 2, 568)),
+                layout + " must vary actual geometry, not just stored region seeds or ids");
         }
         assertEquals(planner.planText("medieval city", options(LayoutType.AUTO, 2, 123)),
             planner.planText("medieval city", options(LayoutType.AUTO, 2, 123)));
@@ -65,17 +75,24 @@ class MultiLayoutPlanningTest {
 
     @Test void weightedBatchTracksConfiguredProportionsAndFiltersBeforeSampling() {
         EnumMap<LayoutType, Integer> counts = new EnumMap<>(LayoutType.class);
+        EnumMap<LayoutType, Integer> repeatedCounts = new EnumMap<>(LayoutType.class);
+        MultiLayoutScenePlanner repeatedPlanner = new MultiLayoutScenePlanner();
         for (long seed = 0; seed < 2000; seed++) {
-            ScenePlan p = planner.planText("village", new PlanOptions("sample", 1, LayoutType.AUTO, "neutral", seed,
-                Map.of(LayoutType.LINEAR, 1.0, LayoutType.GRID, 3.0)));
+            PlanOptions options = new PlanOptions("sample", 1, LayoutType.AUTO, "neutral", seed,
+                only(Map.of(LayoutType.LINEAR, 1.0, LayoutType.GRID, 3.0)));
+            ScenePlan p = planner.planText("village", options);
             counts.merge(p.metadata().layout(), 1, Integer::sum);
+            ScenePlan repeat = repeatedPlanner.planText("village", options);
+            repeatedCounts.merge(repeat.metadata().layout(), 1, Integer::sum);
+            assertEquals(p.metadata().layout(), repeat.metadata().layout());
         }
+        assertEquals(counts, repeatedCounts, "the complete fixed seed batch must reproduce identical counts");
         assertEquals(Set.of(LayoutType.LINEAR, LayoutType.GRID), counts.keySet());
         double fraction = counts.get(LayoutType.GRID) / 2000.0;
         assertTrue(fraction > .70 && fraction < .80, counts.toString());
         for (long seed = 0; seed < 30; seed++) {
             ScenePlan p = planner.planText("mountain village", new PlanOptions("filtered", 1, LayoutType.AUTO, "neutral", seed,
-                Map.of(LayoutType.GRID, 1e10, LayoutType.TERRACED, 1.0)));
+                only(Map.of(LayoutType.GRID, 1e10, LayoutType.TERRACED, 1.0))));
             assertEquals(LayoutType.TERRACED, p.metadata().layout());
             assertFalse(p.metadata().weights().containsKey(LayoutType.GRID));
         }
@@ -91,10 +108,10 @@ class MultiLayoutPlanningTest {
         }
         assertThrows(IllegalArgumentException.class, () -> new PlanOptions("x", 1, null, null, null, Map.of(LayoutType.AUTO, 1.0)));
         assertTrue(assertThrows(IllegalArgumentException.class, () -> planner.planText("mountain village",
-            new PlanOptions("x", 1, LayoutType.AUTO, null, 1L, Map.of(LayoutType.GRID, 1.0))))
+            new PlanOptions("x", 1, LayoutType.AUTO, null, 1L, only(Map.of(LayoutType.GRID, 1.0)))))
             .getMessage().contains("after compatible filtering"));
         assertThrows(IllegalArgumentException.class, () -> planner.planText("village",
-            new PlanOptions("x", 1, LayoutType.AUTO, null, 1L, Map.of(LayoutType.GRID, 0.0))));
+            new PlanOptions("x", 1, LayoutType.AUTO, null, 1L, only(Map.of()))));
         assertTrue(assertThrows(IllegalArgumentException.class, () -> planner.planText("village",
             new PlanOptions("x", 1, LayoutType.GRID, "unicorn", 1L, Map.of()))).getMessage().contains("Unknown style"));
         assertThrows(IllegalArgumentException.class, () -> planner.planText("style:unicorn village", options(LayoutType.AUTO, 1, 1)));
@@ -135,6 +152,35 @@ class MultiLayoutPlanningTest {
         assertTrue(contrast.metadata().features().containsAll(List.of("garden", "trees")));
     }
 
+    @Test void partialWeightOverridesRetainDefaultsAndSeedsAreDomainSeparated() {
+        ScenePlan p = planner.planText("medieval village", new PlanOptions("x", 1, LayoutType.AUTO,
+            null, -42L, Map.of(LayoutType.GRID, 0.0)));
+        assertEquals(0.0, p.metadata().weights().get(LayoutType.GRID));
+        assertEquals(4.0, p.metadata().weights().get(LayoutType.RING));
+        assertEquals(2.0, p.metadata().weights().get(LayoutType.LINEAR));
+        assertEquals(-42, p.seed());
+        long selection = Long.parseLong(p.metadata().parameters().get("selectionSeed"));
+        long generation = Long.parseLong(p.metadata().parameters().get("generatorSeed"));
+        assertEquals(SceneSeeds.selectionSeed(-42), selection);
+        assertEquals(SceneSeeds.generatorSeed(-42, p.metadata().layout()), generation);
+        assertNotEquals(selection, generation);
+        assertNotEquals(p.seed(), generation);
+        Set<Long> seeds = new HashSet<>();
+        for (LayoutType layout : LayoutGeneratorRegistry.ORDER) {
+            assertTrue(seeds.add(SceneSeeds.generatorSeed(-42, layout)));
+        }
+        ScenePlan direct = planner.planText("medieval village", options(p.metadata().layout(), 1, -42));
+        assertEquals(p.regions(), direct.regions(), "selection and override weights must not perturb generator randomness");
+        assertTrue(p.notes().stream().anyMatch(n -> n.contains("style medieval; seed -42; generator")));
+        ScenePlan zeroExplicit = planner.planText("medieval village", new PlanOptions("x", 1, LayoutType.GRID,
+            null, -42L, only(Map.of())));
+        assertEquals(LayoutType.GRID, zeroExplicit.metadata().layout());
+        assertEquals(planner.planText("medieval village", options(LayoutType.GRID, 1, -42)).regions(), zeroExplicit.regions());
+        ScenePlan zeroPrompt = planner.planText("medieval grid village", new PlanOptions("x", 1, LayoutType.AUTO,
+            null, -42L, only(Map.of())));
+        assertEquals(LayoutType.GRID, zeroPrompt.metadata().layout());
+    }
+
     @Test void presetsChangeMaterialsAndSupportedStructures() {
         Set<Set<String>> palettes = new HashSet<>();
         for (StylePreset style : StylePreset.values()) {
@@ -173,6 +219,12 @@ class MultiLayoutPlanningTest {
         assertTrue(sourced.notes().stream().anyMatch(n -> n.contains("Selected layout: LINEAR")));
         assertTrue(sourced.regions().stream().anyMatch(r -> r.type() == RegionType.WATERFALL));
         assertFalse(sourced.notes().stream().anyMatch(n -> n.contains("Unsupported feature 'waterfall'")));
+        String bridgePrompt = "A medieval linear town with a waterfall! No floating islands, no central palace.";
+        ScenePlan bridgePlan = planner.planText(bridgePrompt, new PlanOptions("my-town", 1, LayoutType.LINEAR,
+            "medieval", -42L, Map.of()));
+        assertTrue(bridgePlan.regions().stream().anyMatch(r -> r.type() == RegionType.WATERFALL));
+        assertFalse(bridgePlan.regions().stream().anyMatch(r -> r.type() == RegionType.ISLAND || r.type() == RegionType.PALACE_CORE));
+        assertEquals(bridgePrompt, bridgePlan.metadata().prompt());
         ScenePlan waterExcluded = planner.planText("medieval village with waterfall, no water", options(LayoutType.LINEAR, 1, 1));
         assertFalse(waterExcluded.regions().stream().anyMatch(r -> r.type() == RegionType.WATERFALL || r.type() == RegionType.POOL));
     }
@@ -215,19 +267,39 @@ class MultiLayoutPlanningTest {
             ProceduralBlueprint blueprint = compiler.compile(p, 100_000);
             Set<Cell> walk = walkable(p);
             assertEquals(walk.size(), reachable(walk).size(), layout.toString());
-            if (layout == LayoutType.CLIFF) for (Cell cell : walk) {
+            assertTrue(p.regions().stream().filter(r -> r.type() == RegionType.ROAD).allMatch(r -> r.sizeY() == 1));
+            SceneRegion clearance = p.regions().stream().filter(r -> r.type() == RegionType.CLEARANCE).findFirst().orElseThrow();
+            for (int dx = 0; dx < clearance.sizeX(); dx++) for (int dz = 0; dz < clearance.sizeZ(); dz++) {
+                int x = clearance.x() + dx, z = clearance.z() + dz;
+                assertTrue(solid(blockAt(blueprint, x, clearance.y() - 1, z)), "decoration route floor");
+                assertFalse(solid(blockAt(blueprint, x, clearance.y(), z)), "decoration route first headroom block");
+                assertFalse(solid(blockAt(blueprint, x, clearance.y() + 1, z)), "decoration route second headroom block");
+            }
+            if (layout == LayoutType.CLIFF || layout == LayoutType.TERRACED) for (Cell cell : walk) {
                 assertTrue(solid(blockAt(blueprint, cell.x(), cell.y(), cell.z())));
+                assertTrue(solid(blockAt(blueprint, cell.x(), cell.y() - 1, cell.z())));
                 assertFalse(solid(blockAt(blueprint, cell.x(), cell.y() + 1, cell.z())));
                 assertFalse(solid(blockAt(blueprint, cell.x(), cell.y() + 2, cell.z())));
             }
             SceneRegion waterfall = p.regions().stream().filter(r -> r.type() == RegionType.WATERFALL).findFirst().orElseThrow();
             assertEquals("minecraft:water", blockAt(blueprint, waterfall.x(), waterfall.y(), waterfall.z()));
+            if (layout == LayoutType.CLIFF) assertTrue(solid(blockAt(blueprint, 0, 2, 0)), "decoration bypass must preserve facade");
             assertTrue(solid(blockAt(blueprint, waterfall.x(), waterfall.y(), waterfall.z() - 1)));
             assertTrue(solid(blockAt(blueprint, waterfall.x(), waterfall.y() - waterfall.sizeY(), waterfall.z() - 1)));
             for (SceneRegion r : p.regions()) if (r.type() == RegionType.GROVE) {
                 assertTrue(solid(blockAt(blueprint, r.x() + 3, r.y() - 1, r.z() + 3)));
             }
         }
+        ScenePlan gardenCliff = planner.planText("medieval cliff village with a garden", options(LayoutType.CLIFF, 1, 42));
+        ProceduralBlueprint gardenBlueprint = compiler.compile(gardenCliff, 100_000);
+        Set<Cell> gardenWalk = walkable(gardenCliff);
+        assertEquals(gardenWalk.size(), reachable(gardenWalk).size());
+        for (Cell cell : gardenWalk) {
+            assertTrue(solid(blockAt(gardenBlueprint, cell.x(), cell.y(), cell.z())));
+            assertFalse(solid(blockAt(gardenBlueprint, cell.x(), cell.y() + 1, cell.z())));
+            assertFalse(solid(blockAt(gardenBlueprint, cell.x(), cell.y() + 2, cell.z())));
+        }
+        assertTrue(solid(blockAt(gardenBlueprint, 0, 2, 0)));
     }
 
     @Test void metadataRoundtripResolvedFreshSeedAndOldFixtureGeometry() throws Exception {
@@ -284,10 +356,11 @@ class MultiLayoutPlanningTest {
             Set<Cell> walk = walkable(p);
             Set<Cell> visited = reachable(walk);
             assertEquals(walk.size(), visited.size(), layout + " scale " + scale + " has disconnected roads");
-            if (layout == LayoutType.CLIFF) for (Cell cell : walk) {
-                assertTrue(solid(blockAt(blueprint, cell.x(), cell.y(), cell.z())), "cliff walkway must exist: " + cell);
-                assertFalse(solid(blockAt(blueprint, cell.x(), cell.y() + 1, cell.z())), "cliff access needs headroom: " + cell);
-                assertFalse(solid(blockAt(blueprint, cell.x(), cell.y() + 2, cell.z())), "cliff access needs two-block headroom: " + cell);
+            if (layout == LayoutType.CLIFF || layout == LayoutType.TERRACED) for (Cell cell : walk) {
+                assertTrue(solid(blockAt(blueprint, cell.x(), cell.y(), cell.z())), "walkway must exist: " + cell);
+                assertTrue(solid(blockAt(blueprint, cell.x(), cell.y() - 1, cell.z())), "walkway needs support: " + cell);
+                assertFalse(solid(blockAt(blueprint, cell.x(), cell.y() + 1, cell.z())), "access needs headroom: " + cell);
+                assertFalse(solid(blockAt(blueprint, cell.x(), cell.y() + 2, cell.z())), "access needs two-block headroom: " + cell);
             }
             for (SceneRegion r : p.regions()) if (r.type() == RegionType.BUILDING || r.type() == RegionType.TOWER) {
                 for (int dx : new int[]{0, r.sizeX() - 1}) for (int dz : new int[]{0, r.sizeZ() - 1}) {
@@ -300,6 +373,11 @@ class MultiLayoutPlanningTest {
     }
 
     private record Cell(int x, int y, int z) {}
+    private record Geometry(RegionType type, int x, int y, int z, int sizeX, int sizeY, int sizeZ, int rotation) {}
+    private static List<Geometry> geometry(ScenePlan p) {
+        return p.regions().stream().map(r -> new Geometry(r.type(), r.x(), r.y(), r.z(),
+            r.sizeX(), r.sizeY(), r.sizeZ(), r.rotation())).toList();
+    }
     private static Set<Cell> walkable(ScenePlan p) {
         Set<Cell> cells = new HashSet<>();
         for (SceneRegion r : p.regions()) {

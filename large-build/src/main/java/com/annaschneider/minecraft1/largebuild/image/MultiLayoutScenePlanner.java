@@ -84,9 +84,9 @@ public final class MultiLayoutScenePlanner implements ScenePlanner {
         Map<LayoutType, Double> weights = style.weights();
         weights.putAll(options.weights());
         for (LayoutGenerator generator : compatible) filtered.put(generator.layout(), weights.getOrDefault(generator.layout(), 0.0));
-        // Custom weights are validated even for explicit layouts; default style weights only govern AUTO selection.
+        // PlanOptions validates every supplied number; positive totals are needed only for weighted selection.
         double max = filtered.values().stream().mapToDouble(Double::doubleValue).max().orElse(0);
-        if ((requested == LayoutType.AUTO || !options.weights().isEmpty()) && (max <= 0 || !Double.isFinite(max))) {
+        if (requested == LayoutType.AUTO && (max <= 0 || !Double.isFinite(max))) {
             throw new IllegalArgumentException("Layout weights have no positive total after compatible filtering for terrain '"
                 + prompt.terrain() + "' and exclusions " + prompt.exclusions() + ".");
         }

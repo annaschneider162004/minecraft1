@@ -55,13 +55,15 @@ file. Old application binaries are not guaranteed to understand the new structur
 | TERRACED | Multiple broad, solid-supported platforms ascending in steps, linked by walkable stairs. |
 | RING | Rectangular perimeter streets and surrounding districts, with an open central court and no cross-road or central building. |
 | GRID | Intersecting streets, inhabited blocks and access paths on a continuous foundation, not an island grid. |
-| CLIFF | Rock-supported elevated districts and ledges with stair access, emphasizing the cliff facade. |
+| CLIFF | Vertically stacked districts against one narrow rock facade, with supported ledges, outer pillars and alternating switchback stair flights. |
 | LEGACY | Original floating kingdom, explicitly selectable; rejected when it conflicts with recognized exclusions. |
 
 The grounded primitives use minimum-corner origins and real bounding boxes: foundations/rock, roads,
-buildings/towers, ledges, stairs, walls and bounded decorations. Buildings have floors, walls, doors,
+buildings/towers, ledges, stairs, walls, explicit air clearance and bounded decorations. Buildings have floors, walls, doors,
 windows and roofs. Styles affect actual block materials and supported building/decorative vocabulary.
 Legacy circular-region origin and dimension semantics remain unchanged.
+LEGACY deliberately retains the original generator palette: its style is a stored hint, not a claim that
+the floating palace has been restyled. Its summary explicitly identifies the compatibility geometry/palette.
 
 ## Parsing, precedence and limitations
 
@@ -84,7 +86,8 @@ instead of falling back to floating-palace geometry.
 The parser is intentionally English and vocabulary-based. It does not understand arbitrary negation,
 orientation, asymmetry, real-world landmarks, moving gears, custom materials, narrative semantics or every
 architectural style. The desktop protocol limits prompts to 500 characters; the core parser is also bounded.
-Generated ground/supports do not conform to the existing landscape or excavate terrain automatically.
+Generators do not survey or conform to the existing landscape. Building interiors and access corridors
+deliberately write air within their bounds; this is local clearance, not terrain-aware excavation.
 The ring is orthogonal, not a mathematical circular wall. Sparse block estimates are approximate.
 Recognized subjects include village, town, city, castle, fortress, factory, oasis and harbor. Terrain hints
 include cliff/cliffside, mountain/hillside, river/riverside, coast/coastal and desert. Feature vocabulary includes
@@ -149,6 +152,12 @@ one seed and passes it through the same analysis/planning model. Selection and g
 separate sub-seeds; no generator random calls advance the selector. Same normalized input, options,
 resolved seed and generator version reproduce geometry. Seeds vary building dimensions and supported
 layout parameters; they do not promise an entirely different archetype when layout is explicit.
+`SceneSeeds` uses fixed v1 domain salts and a SplitMix64-style avalanche function. Selection uses
+`mix(seed XOR 0x73656c6563747631)`; each generator uses
+`mix(seed XOR 0x67656e6572617631 XOR its fixed layout salt)`. `SplittableRandom` samples weights and
+generator details from those independent seeds; enum ordinals and unordered collection hashes are not
+used. Metadata parameters retain both derived seeds and the selection source. Sampled dimensions live
+in the stored regions, avoiding a second competing geometry-parameter representation.
 
 For lasting reproducibility, retain the JSON geometry, not just a prompt. Algorithm changes require a
 generator-version increment; older versions are not automatically replayed by a future generator.
@@ -178,6 +187,7 @@ the standalone planner accepts up to 24.
 ## Safety, build and verification
 
 Bounds come from compiled generators, including roofs, stairs and supports—not idealized layout centers.
+Air-clearance bounds remain part of build validation but are not drawn as opaque structures in the desktop map.
 The existing queue validates translated Y bounds, vanilla hard horizontal limits and section budgets
 before starting. A new border hook also checks the active Fabric world border's corners before submission.
 Errors explain the bounds/limit conflict; geometry is not silently clipped. A border changing while a job
@@ -201,6 +211,7 @@ existing persistence and blueprint streaming formats need no replacement impleme
 - `/home/runner/work/minecraft1/minecraft1/large-build/src/main/java/com/annaschneider/minecraft1/largebuild/image/OfflinePromptParser.java`
 - `/home/runner/work/minecraft1/minecraft1/large-build/src/main/java/com/annaschneider/minecraft1/largebuild/image/PromptAnalysis.java`
 - `/home/runner/work/minecraft1/minecraft1/large-build/src/main/java/com/annaschneider/minecraft1/largebuild/image/StylePreset.java`
+- `/home/runner/work/minecraft1/minecraft1/large-build/src/main/java/com/annaschneider/minecraft1/largebuild/image/SceneSeeds.java`
 - `/home/runner/work/minecraft1/minecraft1/large-build/src/main/java/com/annaschneider/minecraft1/largebuild/image/PlanOptions.java`
 - `/home/runner/work/minecraft1/minecraft1/large-build/src/main/java/com/annaschneider/minecraft1/largebuild/image/HeuristicImageAnalysisProvider.java`
 - `/home/runner/work/minecraft1/minecraft1/large-build/src/main/java/com/annaschneider/minecraft1/largebuild/generator/GroundedStructureGenerator.java`
@@ -279,6 +290,19 @@ Java 17 / Gradle 9.8 headless testing uses the existing Fabric stubs. The separa
 attempt ran on installed Temurin JDK 25.0.4.1, but failed during build configuration: DNS could not resolve
 `maven.fabricmc.net` to download `net.fabricmc:fabric-loom:1.18-SNAPSHOT`. Consequently, no installable
 Fabric jar or in-game visual validation is claimed for this environment.
+
+| Verification | Result |
+| --- | --- |
+| Full `:large-build:test` module | 58 tests passed, including existing planner/build tests |
+| Full `:architect-link:test` module | 19 tests passed |
+| Full `:architect-desktop:test` module | 14 passed; one existing Swing Video Studio test skipped in headless mode |
+| Full `:architect-mod:test` module | 58 tests passed, including Fabric-stub tests |
+| Existing headless link demo | Six explicit layouts created/saved/previewed; build/pause/resume/cancel reused saved geometry |
+| Secret scan | No secrets detected in changed files |
+| Real Fabric JDK 25 compilation | Blocked before compilation by Fabric Maven DNS, as described above |
+
+No skipped layout test, weakened unrelated assertion, or successful real-game run is claimed. The initial integration
+compile gap and waterfall assertion failure were corrected; subsequent full mod tests passed.
 
 ## Tóm tắt tiếng Việt
 

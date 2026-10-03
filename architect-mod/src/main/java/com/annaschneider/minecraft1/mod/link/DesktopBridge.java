@@ -11,6 +11,7 @@ import com.annaschneider.minecraft1.largebuild.scene.SceneCompiler;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePlan;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePreview;
 import com.annaschneider.minecraft1.largebuild.scene.SceneRegion;
+import com.annaschneider.minecraft1.largebuild.scene.RegionType;
 import com.annaschneider.minecraft1.link.BuildMode;
 import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.JobStatus;
@@ -362,6 +363,9 @@ public final class DesktopBridge implements AutoCloseable {
         ScenePreview preview = ScenePreview.of(plan, compiler.compile(plan, engine.queue().settings().maxSectionsPerJob()));
         List<RegionBox> boxes = new ArrayList<>(Math.min(plan.regions().size(), MAX_REGION_BOXES));
         for (SceneRegion region : plan.regions()) {
+            if (region.type() == RegionType.CLEARANCE) {
+                continue;
+            }
             if (boxes.size() >= MAX_REGION_BOXES) {
                 break;
             }
