@@ -66,9 +66,10 @@ class VideoStudioTest {
                 assertEquals(id, ((VoicePack) voices.getSelectedItem()).id());
                 assertEquals(id, settings.voiceId(), "refresh must not overwrite the saved selection");
                 modes.setSelectedIndex(0);
-                assertEquals("piper", ((VoicePack) voices.getSelectedItem()).engine());
+                assertEquals(VoiceSelection.NONE, voices.getSelectedItem());
+                assertEquals(id, settings.voiceId(), "switching modes must not silently choose a different speaker");
                 modes.setSelectedIndex(1);
-                assertEquals("piper", ((VoicePack) voices.getSelectedItem()).engine());
+                assertEquals(VoiceSelection.NONE, voices.getSelectedItem());
                 modes.setSelectedIndex(2);
                 assertEquals(id, ((VoicePack) voices.getSelectedItem()).id());
             });

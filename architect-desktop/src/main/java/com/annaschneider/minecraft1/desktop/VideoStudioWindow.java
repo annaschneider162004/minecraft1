@@ -28,7 +28,6 @@ import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineEvent;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
-import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
@@ -82,7 +81,6 @@ import java.util.function.Supplier;
  */
 final class VideoStudioWindow extends JFrame {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
-    private static final String NO_VOICE = "(No narration)";
 
     private final VideoStudio studio;
     private final Supplier<BuildContext> buildContext;
@@ -128,6 +126,8 @@ final class VideoStudioWindow extends JFrame {
     private boolean busy;
     private Path lastExport;
     private Future<?> flowTask;
+    private boolean updatingVoiceSelection;
+    private VoiceManagerWindow voiceManager;
 
     VideoStudioWindow(VideoStudio studio, Supplier<BuildContext> buildContext, Supplier<String> buildDescription, Path replayVideos) {
         super("Minecraft Architect - Video Studio");
@@ -273,10 +273,12 @@ final class VideoStudioWindow extends JFrame {
             }
         });
         voiceBox.addActionListener(event -> {
+            if (updatingVoiceSelection) {
+                return;
+            }
             VoicePack voice = selectedVoice();
             studio.settings().setVoiceId(voice == null ? "" : voice.id());
-            voiceInfo.setText(voice == null ? "The video is exported without narration." : voice.id()
-                + (voice.description().isBlank() ? "" : " - " + voice.description()));
+            updateVoiceInfo();
         });
         voiceMode.setToolTipText("Built-in/custom modes use installed Piper packs; clone mode uses local sample profiles.");
         voiceMode.addActionListener(event -> updateVoiceList(studio.settings().voiceId()));
@@ -295,7 +297,11 @@ final class VideoStudioWindow extends JFrame {
         voiceButtons.add(previewButton);
         voiceButtons.add(refresh);
         voiceButtons.add(openVoices);
+        JButton manage = new JButton("Manage voices / Quản lý giọng...");
+        manage.setToolTipText("Browse the offline catalog; filter, favorite, preview or explicitly install voices.");
+        manage.addActionListener(event -> openVoiceManager());
         JPanel cloningButtons = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
+        cloningButtons.add(manage);
         JButton clone = new JButton("Clone voice from sample... / Clone voice từ sample...");
         clone.addActionListener(event -> cloneVoice());
         JButton recordSample = new JButton("Record sample / Ghi âm mẫu");
@@ -404,12 +410,7 @@ final class VideoStudioWindow extends JFrame {
             VoiceDiscovery found = studio.discoverVoices();
             List<String> diagnostics = studio.diagnostics(found);
             SwingUtilities.invokeLater(() -> {
-                voices = found;
-                String savedId = studio.settings().voiceId();
-                if (found.find(savedId).map(v -> XttsTtsEngine.ID.equals(v.engine())).orElse(false)) {
-                    voiceMode.setSelectedIndex(2);
-                }
-                updateVoiceList(savedId);
+                acceptVoices(found);
                 diagnostics.forEach(this::log);
                 if (found.voices().isEmpty()) {
                     log("No voices yet: copy a Piper voice (.onnx + .onnx.json) into " + found.folder() + " and click Refresh.");
@@ -423,12 +424,47 @@ final class VideoStudioWindow extends JFrame {
             return;
         }
         boolean cloned = voiceMode.getSelectedIndex() == 2;
-        DefaultComboBoxModel<Object> model = new DefaultComboBoxModel<>();
-        model.addElement(NO_VOICE);
-        voices.voices().stream().filter(v -> cloned == XttsTtsEngine.ID.equals(v.engine())).forEach(model::addElement);
-        voiceBox.setModel(model);
-        VoicePack selected = voices.find(selectedId).filter(v -> cloned == XttsTtsEngine.ID.equals(v.engine())).orElse(null);
-        voiceBox.setSelectedItem(selected != null ? selected : model.getElementAt(model.getSize() > 1 ? 1 : 0));
+        updatingVoiceSelection = true;
+        try {
+            voiceBox.setModel(VoiceSelection.model(voices.voices(), selectedId, cloned));
+        } finally {
+            updatingVoiceSelection = false;
+        }
+        updateVoiceInfo();
+    }
+
+    private void updateVoiceInfo() {
+        VoicePack voice = selectedVoice();
+        String saved = studio.settings().voiceId();
+        voiceInfo.setText(voice != null ? voice.id() + (voice.description().isBlank() ? "" : " - " + voice.description())
+            : saved.isBlank() ? "The video is exported without narration."
+            : "Saved voice unavailable here; choose explicitly (no substitute).");
+        voiceInfo.setToolTipText(voice == null && !saved.isBlank() ? "Saved exact voice ID: " + saved : voiceInfo.getText());
+    }
+
+    private void acceptVoices(VoiceDiscovery found) {
+        voices = found;
+        String savedId = studio.settings().voiceId();
+        found.find(savedId).ifPresent(voice ->
+            voiceMode.setSelectedIndex(XttsTtsEngine.ID.equals(voice.engine()) ? 2 : 0));
+        updateVoiceList(savedId);
+    }
+
+    private void openVoiceManager() {
+        if (voiceManager == null || !voiceManager.isDisplayable()) {
+            voiceManager = new VoiceManagerWindow(this, studio, this::acceptVoices, voice -> {
+                if (busy) {
+                    error("Please wait for the current studio task before changing the narration voice.");
+                    return;
+                }
+                studio.settings().setVoiceId(voice.id());
+                voiceMode.setSelectedIndex(XttsTtsEngine.ID.equals(voice.engine()) ? 2 : 0);
+                updateVoiceList(voice.id());
+                log("Selected exact voice: " + voice.id());
+            }, this::previewVoice);
+        }
+        voiceManager.setVisible(true);
+        voiceManager.toFront();
     }
 
     private void cloneVoice() {
@@ -516,8 +552,12 @@ final class VideoStudioWindow extends JFrame {
         }
         VoicePack voice = selectedVoice();
         if (voice != null && !voice.storyLanguage().equals(storyboard.language())) {
-            log("Note: the story is in '" + storyboard.language() + "' but the voice speaks '" + voice.language()
-                + "'. Click Write story again to match the voice.");
+            error(voiceMismatch(voice));
+            return;
+        }
+        if (voice == null && !studio.settings().voiceId().isBlank()) {
+            error("The saved voice is unavailable. Use Manage voices to choose the exact speaker, or explicitly choose No narration.");
+            return;
         }
         List<Path> footage = new ArrayList<>();
         for (int i = 0; i < footageModel.size(); i++) {
@@ -557,8 +597,12 @@ final class VideoStudioWindow extends JFrame {
         ExportMode mode = modeBox.getSelectedItem() instanceof ExportMode chosen ? chosen : ExportMode.AUTO_EXPORT;
         VoicePack voice = selectedVoice();
         if (mode.narrates() && voice != null && !voice.storyLanguage().equals(storyboard.language())) {
-            log("Note: the story is in '" + storyboard.language() + "' but the voice speaks '" + voice.language()
-                + "'. Click Write story again to match the voice.");
+            error(voiceMismatch(voice));
+            return;
+        }
+        if (mode.narrates() && voice == null && !studio.settings().voiceId().isBlank()) {
+            error("The saved voice is unavailable. Use Manage voices to choose the exact speaker before narrating.");
+            return;
         }
         BuildContext built = buildContext.get();
         // fresh footage: milestones of an earlier recording do not line up with it, so scenes are spread evenly
@@ -663,11 +707,23 @@ final class VideoStudioWindow extends JFrame {
             error("Choose a voice first (copy voices into the voices folder, then click Refresh).");
             return;
         }
+        previewVoice(voice);
+    }
+
+    private String voiceMismatch(VoicePack voice) {
+        return "The story is in '" + storyboard.language() + "', but the selected voice speaks '" + voice.language()
+            + "'. Choose a matching installed voice in Manage voices or rewrite the story for this voice. "
+            + "Local XTTS cloning does not support Vietnamese.";
+    }
+
+    private void previewVoice(VoicePack voice) {
         String language = voice.storyLanguage();
         runInBackground("Speaking a sample with " + voice.name() + "...", () -> {
             Path wav = null;
             try {
-                wav = Files.createTempFile("architect-voice-preview-", ".wav");
+                Path previewFolder = studio.settings().voicesFolder().resolve(".previews");
+                Files.createDirectories(previewFolder);
+                wav = Files.createTempFile(previewFolder, "architect-voice-preview-", ".wav");
                 NarrationClip clip = studio.narrator().preview(voice, com.annaschneider.minecraft1.video.voice.Narrator.previewText(language), wav);
                 play(wav);
                 wav = null; // deleted after playback
@@ -841,6 +897,12 @@ final class VideoStudioWindow extends JFrame {
             + "<i>vi_VN-vais1000-medium</i> or <i>en_US-amy-medium</i>) from huggingface.co/rhasspy/piper-voices, copy them into "
             + "the voices folder (<b>Open voices folder</b>) and click <b>Refresh</b>. An optional <i>&lt;name&gt;.voice.json</i> "
             + "sets <i>name</i>, <i>language</i> and <i>description</i>. Invalid files are listed in the log with the reason.</p>"
+            + "<p><b>Manage voices / Quản lý giọng...</b> opens a searchable offline catalog with language, source, installation and favorite "
+            + "filters. Refresh reads only bundled metadata and installed files. Preview and Use this voice require installed "
+            + "voices. Install / Retry downloads a shared model only after explicit license acceptance; Cancel interrupts "
+            + "the download. Catalog counts describe verified model-local IDs, not independently deduplicated people; "
+            + "cloned profiles and presets do not count as model inventory. Missing saved "
+            + "speakers are never silently replaced; choose a voice explicitly. Story/voice language mismatches block narration.</p>"
             + "<h3>Clone voice from sample...</h3><p>Choose a local Coqui <i>tts</i> executable and a preinstalled XTTS v2 "
             + "model folder (model.pth, config.json, vocab.json) in <b>Tools...</b>. Click <b>Clone voice from sample...</b>, "
             + "upload a 6–60 second, 16-bit PCM WAV (mono/stereo, 8–96 kHz, max 20 MB), and name the profile. "
@@ -931,6 +993,9 @@ final class VideoStudioWindow extends JFrame {
 
     @Override
     public void dispose() {
+        if (voiceManager != null) {
+            voiceManager.dispose();
+        }
         worker.shutdownNow();
         super.dispose();
     }

@@ -6,6 +6,11 @@ import com.annaschneider.minecraft1.video.voice.Narrator;
 import com.annaschneider.minecraft1.video.voice.PiperTtsEngine;
 import com.annaschneider.minecraft1.video.voice.VoicePack;
 import com.annaschneider.minecraft1.video.voice.WavInfo;
+import com.annaschneider.minecraft1.video.voice.VoicePackRegistry;
+import com.annaschneider.minecraft1.video.voice.XttsTtsEngine;
+import com.annaschneider.minecraft1.video.render.FfmpegTool;
+import com.annaschneider.minecraft1.video.render.RenderOptions;
+import com.annaschneider.minecraft1.video.story.StoryService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -15,6 +20,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -91,6 +98,8 @@ class NarrationTest {
             return new com.annaschneider.minecraft1.video.ProcessRunner.Result(0, "");
         });
         VoicePack voice = TestSupport.voice(dir);
+        Files.write(voice.model(), new byte[] {1});
+        Files.writeString(voice.config(), "{\"num_speakers\":1,\"audio\":{\"sample_rate\":22050}}");
         Path out = dir.resolve("out.wav");
         piper.synthesize(voice, "Hello\nworld; rm -rf /", out);
         assertEquals(List.of(exe.toString(), "--model", voice.model().toString(), "--config", voice.config().toString(),
@@ -106,5 +115,117 @@ class NarrationTest {
         });
         assertThrows(NarrationException.class, () -> hanging.synthesize(voice, "hi", dir.resolve("h.wav")));
         assertThrows(NarrationException.class, () -> piper.synthesize(voice, "  \n ", dir.resolve("e.wav")));
+        assertTrue(assertThrows(NarrationException.class,
+            () -> piper.synthesize(voice, null, dir.resolve("e.wav"))).getMessage().contains("text is empty"));
+    }
+
+    @Test
+    void previewAndNarrationPassTheSelectedNumericSpeaker(@TempDir Path dir) throws Exception {
+        VoicePack voice = multiSpeaker(dir);
+        Path exe = Files.writeString(dir.resolve("piper"), "");
+        List<List<String>> commands = new ArrayList<>();
+        PiperTtsEngine piper = new PiperTtsEngine(exe, (command, stdin, timeout) -> {
+            commands.add(command);
+            TestSupport.writeWav(Path.of(command.get(command.indexOf("--output_file") + 1)), 1);
+            return new ProcessRunner.Result(0, "");
+        });
+        Narrator narrator = new Narrator(List.of(piper));
+        narrator.preview(voice, null, dir.resolve("preview.wav"));
+        narrator.narrate(story("en"), voice, dir, ignored -> { });
+        assertEquals(2, commands.size());
+        VoicePack retained = new VoicePackRegistry(Set.of("piper")).discover(dir).find(voice.id()).orElseThrow();
+        assertEquals(voice, retained);
+        FfmpegTool ffmpeg = new FfmpegTool(Files.writeString(dir.resolve("ffmpeg"), "fake"), new TestSupport.FakeFfmpeg());
+        VideoPipeline pipeline = new VideoPipeline(StoryService.templatesOnly(), narrator, () -> Optional.of(ffmpeg));
+        ExportResult export = pipeline.export(new ExportRequest(story("en"), null,
+            List.of(Files.writeString(dir.resolve("footage.mp4"), "fake")), retained, dir.resolve("out"),
+            "selected-speaker", RenderOptions.hd720(), false), ignored -> { });
+        assertTrue(export.narrated(), export.warnings().toString());
+        assertTrue(Files.isRegularFile(export.video()));
+        assertEquals(3, commands.size());
+        for (List<String> command : commands) {
+            assertEquals("2", command.get(command.indexOf("--speaker") + 1));
+            assertEquals(voice.model().toString(), command.get(command.indexOf("--model") + 1));
+            assertEquals(voice.config().toString(), command.get(command.indexOf("--config") + 1));
+        }
+    }
+
+    @Test
+    void rejectsStaleSpeakerSelectionMissingFilesAndWrongBackendBeforeRunning(@TempDir Path dir) throws Exception {
+        VoicePack voice = multiSpeaker(dir);
+        PiperTtsEngine piper = new PiperTtsEngine(Files.writeString(dir.resolve("piper"), ""),
+            (command, stdin, timeout) -> { throw new AssertionError("invalid voice must not run"); });
+        VoicePack missingSpeaker = new VoicePack(voice.id(), voice.name(), voice.language(), voice.engine(),
+            voice.model(), voice.config(), voice.sampleRate(), voice.description());
+        assertTrue(assertThrows(NarrationException.class,
+            () -> piper.synthesize(missingSpeaker, "hello", dir.resolve("out.wav"))).getMessage().contains("speaker ID is required"));
+        Files.writeString(voice.config(), "{\"num_speakers\":2}");
+        assertTrue(assertThrows(NarrationException.class,
+            () -> piper.synthesize(voice, "hello", dir.resolve("out.wav"))).getMessage().contains("speaker"));
+        Files.writeString(voice.config(), "{\"num_speakers\":3,\"speaker_id_map\":{\"changed\":2}}");
+        assertThrows(NarrationException.class, () -> piper.synthesize(voice, "hello", dir.resolve("out.wav")));
+        Files.writeString(voice.config(), "{\"num_speakers\":3,\"speaker_id_map\":{\"a\":0,\"b\":0}}");
+        assertThrows(NarrationException.class, () -> piper.synthesize(voice, "hello", dir.resolve("out.wav")));
+        Files.delete(voice.config());
+        assertTrue(assertThrows(NarrationException.class,
+            () -> piper.synthesize(voice, "hello", dir.resolve("out.wav"))).getMessage().contains("missing model config"));
+        Files.delete(voice.model());
+        assertTrue(assertThrows(NarrationException.class,
+            () -> piper.synthesize(voice, "hello", dir.resolve("out.wav"))).getMessage().contains("Missing Piper model"));
+        VoicePack clone = new VoicePack("clone", "Clone", "en", XttsTtsEngine.ID, voice.model(), voice.config(), 24000, "");
+        assertTrue(assertThrows(NarrationException.class,
+            () -> piper.synthesize(clone, "hello", dir.resolve("out.wav"))).getMessage().contains("backend"));
+    }
+
+    @Test
+    void rejectsUnsupportedLanguagesAndMismatchesBeforeSpeaking(@TempDir Path dir) throws Exception {
+        TestSupport.FakeTts tts = new TestSupport.FakeTts();
+        Narrator narrator = new Narrator(List.of(tts));
+        VoicePack english = TestSupport.voice(dir);
+        assertThrows(NarrationException.class, () -> narrator.narrate(story("vi"), english, dir, ignored -> { }));
+        assertThrows(NarrationException.class, () -> narrator.narrate(story("fr"), english, dir, ignored -> { }));
+        VoicePack vietnamese = new VoicePack("vi", "Vi", "vi_VN", "piper", english.model(), english.config(), 22050, "");
+        assertThrows(NarrationException.class, () -> narrator.narrate(story("en"), vietnamese, dir, ignored -> { }));
+        VoicePack french = new VoicePack("fr", "French", "fr_FR", "piper", english.model(), english.config(), 22050, "");
+        assertEquals("fr", french.storyLanguage());
+        assertTrue(narrator.unavailableReason(french).orElseThrow().contains("Unsupported narration language"));
+        assertThrows(NarrationException.class, () -> narrator.preview(french, "bonjour", dir.resolve("preview.wav")));
+        assertThrows(IllegalArgumentException.class, () -> Narrator.previewText("fr"));
+        assertTrue(tts.spoken.isEmpty());
+        narrator.narrate(story("en-US"), english, dir, ignored -> { });
+        assertEquals(1, tts.spoken.size());
+        TestSupport.FakeTts xtts = new TestSupport.FakeTts() {
+            @Override public String id() { return XttsTtsEngine.ID; }
+        };
+        VoicePack wrongClone = new VoicePack("clone", "Clone", "vi", XttsTtsEngine.ID, english.model(), english.config(), 24000, "");
+        assertTrue(new Narrator(List.of(xtts)).unavailableReason(wrongClone).orElseThrow().contains("English"));
+    }
+
+    @Test
+    void preservesTheRegisteredEngineSpiForPreviewAndNarration(@TempDir Path dir) throws Exception {
+        TestSupport.FakeTts custom = new TestSupport.FakeTts() {
+            @Override public String id() { return "custom-tts"; }
+        };
+        VoicePack voice = new VoicePack("custom", "Custom", "en_US", custom.id(),
+            dir.resolve("custom.model"), dir.resolve("custom.config"), 22050, "");
+        Narrator narrator = new Narrator(List.of(custom));
+        assertTrue(narrator.unavailableReason(voice).isEmpty());
+        narrator.preview(voice, "custom preview", dir.resolve("custom-preview.wav"));
+        narrator.narrate(story("en"), voice, dir, ignored -> { });
+        assertEquals(List.of("custom preview", "hello"), custom.spoken);
+        assertTrue(new Narrator(List.of()).unavailableReason(voice).orElseThrow().contains("'custom-tts' engine"));
+    }
+
+    private static Storyboard story(String language) {
+        return new Storyboard("t", "p", language, "template",
+            List.of(new Scene(0, SceneKind.INTRO, "a", "hello", 0, 0, 5)));
+    }
+
+    private static VoicePack multiSpeaker(Path dir) throws Exception {
+        Path model = Files.write(dir.resolve("en_US-multi-medium.onnx"), new byte[] {1});
+        Files.writeString(dir.resolve("en_US-multi-medium.onnx.json"),
+            "{\"audio\":{\"sample_rate\":22050},\"language\":{\"code\":\"en_US\"},"
+                + "\"num_speakers\":3,\"speaker_id_map\":{\"first\":0,\"second\":1,\"third\":2}}");
+        return new VoicePackRegistry(Set.of("piper")).loadSpeakers(dir, model).get(2);
     }
 }
