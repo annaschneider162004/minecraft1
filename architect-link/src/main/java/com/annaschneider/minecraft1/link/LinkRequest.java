@@ -38,8 +38,16 @@ public record LinkRequest(
     String data,
     String camera,
     Boolean npc,
-    CameraNpcSettings settings
+    CameraNpcSettings settings,
+    PlanGenerationOptions generation
 ) {
+    public LinkRequest(int v, String id, RequestType type, String token, String client, String player,
+                       BuildMode mode, String template, String planId, String source, String prompt, Integer scale,
+                       String fileName, String data, String camera, Boolean npc, CameraNpcSettings settings) {
+        this(v, id, type, token, client, player, mode, template, planId, source, prompt, scale, fileName, data, camera, npc,
+            settings, null);
+    }
+
     public LinkRequest(int v, String id, RequestType type, String token, String client, String player,
                        BuildMode mode, String template, String planId, String source, String prompt, Integer scale,
                        String fileName, String data, String camera, Boolean npc) {
@@ -73,6 +81,16 @@ public record LinkRequest(
     public static LinkRequest planFromPrompt(String planId, String prompt, int scale) {
         return new LinkRequest(LinkProtocol.VERSION, null, RequestType.PLAN, null, null, null, null, null, planId, null,
             prompt, scale, null, null, null, null);
+    }
+
+    public static LinkRequest planFromPrompt(String planId, String prompt, int scale, PlanGenerationOptions generation) {
+        return new LinkRequest(LinkProtocol.VERSION, null, RequestType.PLAN, null, null, null, null, null, planId, null,
+            prompt, scale, null, null, null, null, null, generation);
+    }
+
+    public static LinkRequest planFromSource(String planId, String source, int scale, PlanGenerationOptions generation) {
+        return new LinkRequest(LinkProtocol.VERSION, null, RequestType.PLAN, null, null, null, null, null, planId, source,
+            null, scale, null, null, null, null, null, generation);
     }
 
     public static LinkRequest preview(BuildMode mode, String templateOrPlanId) {
@@ -114,7 +132,7 @@ public record LinkRequest(
 
     public LinkRequest withId(String newId) {
         return new LinkRequest(v, newId, type, token, client, player, mode, template, planId, source, prompt, scale, fileName,
-            data, camera, npc, settings);
+            data, camera, npc, settings, generation);
     }
 
     /** Short description for logs; never includes the token or image data. */

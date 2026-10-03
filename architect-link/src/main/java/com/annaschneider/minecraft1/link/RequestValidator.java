@@ -30,6 +30,8 @@ public final class RequestValidator {
         if (request.type() == null) {
             throw new LinkProtocolException("Unknown or missing request type.");
         }
+        require(request.generation() == null || request.type() == RequestType.PLAN,
+            "Generation choices only apply to plan requests.");
         switch (request.type()) {
             case HELLO -> {
                 require(request.token() != null && !request.token().isBlank() && request.token().length() <= 128,
@@ -56,6 +58,8 @@ public final class RequestValidator {
                 boolean hasSource = request.source() != null && !request.source().isBlank();
                 boolean hasPrompt = request.prompt() != null && !request.prompt().isBlank();
                 require(hasSource != hasPrompt, "A plan needs either an image source or a prompt (not both).");
+                require(!hasSource || request.generation() == null,
+                    "Layout/style/seed options apply to text prompts; image plans use legacy metadata defaults.");
                 require(!hasSource || SOURCE.matcher(request.source()).matches(),
                     "Image source must look like uploads/<file> or placeholder:<name> (no spaces, at most 200 characters).");
                 require(!hasPrompt || request.prompt().length() <= LinkProtocol.MAX_PROMPT_LENGTH,

@@ -10,6 +10,7 @@ import com.annaschneider.minecraft1.link.LinkRequest;
 import com.annaschneider.minecraft1.link.CameraNpcSettings;
 import com.annaschneider.minecraft1.link.MessageKind;
 import com.annaschneider.minecraft1.link.PlanSummary;
+import com.annaschneider.minecraft1.link.PlanGenerationOptions;
 import com.annaschneider.minecraft1.link.RecordingStatus;
 import com.annaschneider.minecraft1.link.RequestType;
 import com.annaschneider.minecraft1.link.ServerInfo;
@@ -21,6 +22,7 @@ import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -93,6 +95,16 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     private final JButton connectButton = new JButton("Connect");
     private final JTabbedPane sourceTabs = new JTabbedPane();
     private final JTextArea promptArea = new JTextArea(5, 30);
+    private final JComboBox<String> layoutChoice = new JComboBox<>(new String[] {
+        "Auto", "RADIAL", "LINEAR", "TERRACED", "RING", "GRID", "CLIFF", "LEGACY"
+    });
+    private final JComboBox<String> styleChoice = new JComboBox<>(new String[] {
+        "Auto", "fantasy", "medieval", "desert", "industrial", "neutral"
+    });
+    private final JTextField seedField = new JTextField(20);
+    private final JButton variationButton = new JButton("New variation");
+    private final PlanGenerationModel generationModel = new PlanGenerationModel();
+    private long selectionRevision;
     private final JLabel imagePreview = new JLabel("", SwingConstants.CENTER);
     private final JLabel imageInfo = new JLabel("No picture chosen.");
     private final DefaultListModel<String> templateModel = new DefaultListModel<>();
@@ -271,6 +283,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         sourceTabs.setToolTipTextAt(TAB_IMAGE, "Use a picture as inspiration for a big fantasy build.");
         sourceTabs.setToolTipTextAt(TAB_TEMPLATE, "Small ready-made buildings, built right where you stand.");
         sourceTabs.addChangeListener(event -> {
+            selectionRevision++;
             plannedKey = null;
             suggestName();
             updateControls();
@@ -294,8 +307,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         scaleSlider.setMinorTickSpacing(1);
         scaleSlider.setPaintTicks(true);
         scaleSlider.setSnapToTicks(true);
-        scaleSlider.setToolTipText("Bigger = more floating islands around the palace (and many more blocks).");
+        scaleSlider.setToolTipText("Bigger = more districts and blocks. Picture plans keep the legacy island-ring layout.");
         scaleSlider.addChangeListener(event -> {
+            selectionRevision++;
             updateScaleLabel();
             plannedKey = null;
         });
@@ -315,6 +329,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         c.insets = new Insets(4, 0, 6, 0);
         planNameField.setToolTipText("Saved plan name: a-z, 0-9, '-' or '_'. Reusing a name replaces that plan.");
         planNameField.getDocument().addDocumentListener(onChange(() -> {
+            selectionRevision++;
             plannedKey = null;
             boolean valid = BuildInputs.isValidPlanName(planNameField.getText());
             planNameField.setForeground(valid ? UIManager.getColor("TextField.foreground") : RED);
@@ -339,18 +354,56 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         tab.add(new JLabel("Describe your build in a few words:"), BorderLayout.NORTH);
         promptArea.setLineWrap(true);
         promptArea.setWrapStyleWord(true);
-        promptArea.setText("white palace with waterfalls, bridges and cherry trees");
+        promptArea.setText("medieval village with gardens and towers, no floating islands, no central palace");
         promptArea.getDocument().addDocumentListener(onChange(() -> {
+            selectionRevision++;
             plannedKey = null;
             suggestName();
             updateControls();
         }));
         tab.add(new JScrollPane(promptArea), BorderLayout.CENTER);
-        JLabel tip = new JLabel("<html>Tip: these words shape the result - <b>palace, castle, temple, tower, bridge, terrace, "
-            + "waterfall, island, floating, cloud, sky, garden, flower, cherry, sakura, path, road</b>. "
-            + "Add <b>dark</b>/<b>night</b> or <b>desert</b> for another style. Works offline, no account needed.</html>");
+        JLabel tip = new JLabel("<html>Describe subjects, terrain and features, e.g. <b>castle, village, cliff, tower, "
+            + "waterfall, garden</b>. Auto chooses a prompt-aware layout and style; explicit choices override it."
+            + "<br>Use exclusions such as <b>no waterfalls</b>. New variation changes the seed; preview/build reuse it."
+            + "<br>Offline heuristic generation, not an AI interpretation of every detail.</html>");
         tip.setForeground(Color.GRAY);
-        tab.add(tip, BorderLayout.SOUTH);
+        JPanel bottom = new JPanel(new BorderLayout(0, 6));
+        JPanel choices = new JPanel(new GridBagLayout());
+        GridBagConstraints c = new GridBagConstraints();
+        c.anchor = GridBagConstraints.WEST;
+        c.insets = new Insets(2, 2, 2, 6);
+        choices.add(new JLabel("Layout:"), c);
+        c.gridx = 1;
+        choices.add(layoutChoice, c);
+        c.gridx = 2;
+        choices.add(new JLabel("Style:"), c);
+        c.gridx = 3;
+        choices.add(styleChoice, c);
+        c.gridx = 0;
+        c.gridy = 1;
+        choices.add(new JLabel("Seed:"), c);
+        c.gridx = 1;
+        c.gridwidth = 2;
+        choices.add(seedField, c);
+        c.gridx = 3;
+        c.gridwidth = 1;
+        choices.add(variationButton, c);
+        seedField.setToolTipText("Signed 64-bit integer. Blank chooses once for a new plan; preview and build reuse it.");
+        layoutChoice.addActionListener(event -> generationEdited());
+        styleChoice.addActionListener(event -> generationEdited());
+        seedField.getDocument().addDocumentListener(onChange(this::generationEdited));
+        variationButton.addActionListener(event -> {
+            try {
+                long seed = generationModel.newVariation(generationInputs());
+                seedField.setText(Long.toString(seed));
+                notice("New variation seed: " + seed + ". Preview to create this plan.", false);
+            } catch (IllegalArgumentException ex) {
+                notice(ex.getMessage(), true);
+            }
+        });
+        bottom.add(choices, BorderLayout.NORTH);
+        bottom.add(tip, BorderLayout.SOUTH);
+        tab.add(bottom, BorderLayout.SOUTH);
         return tab;
     }
 
@@ -398,7 +451,8 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         bottom.add(choose, BorderLayout.WEST);
         bottom.add(imageInfo, BorderLayout.CENTER);
         JLabel tip = new JLabel("<html>PNG, JPG, GIF or WebP up to " + LinkProtocol.MAX_IMAGE_BYTES / (1024 * 1024)
-            + " MiB. The picture's name and shape guide the layout (e.g. <i>sky-palace-waterfall.png</i>).</html>");
+            + " MiB. Metadata only: the file name and dimensions guide a legacy island-ring plan."
+            + "<br>No pixel analysis. Text layout/style/seed controls do not apply to pictures.</html>");
         tip.setForeground(Color.GRAY);
         bottom.add(tip, BorderLayout.SOUTH);
         tab.add(bottom, BorderLayout.SOUTH);
@@ -571,10 +625,12 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         if (selection == null) {
             return;
         }
+        long revision = selectionRevision;
         runBusy("Preparing preview...", client -> selection.mode() == BuildMode.TEMPLATE
             ? client.call(LinkRequest.preview(BuildMode.TEMPLATE, selection.template()))
             : ensurePlan(client, selection), result -> {
-                if (result.plan() != null) {
+                if (revision == selectionRevision && result.plan() != null) {
+                    plannedKey = selection.key();
                     showPlan(result.plan());
                 }
             });
@@ -585,6 +641,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         if (selection == null) {
             return;
         }
+        long revision = selectionRevision;
         runBusy("Sending build to Minecraft...", client -> {
             if (selection.mode() == BuildMode.TEMPLATE) {
                 return client.call(LinkRequest.build(BuildMode.TEMPLATE, selection.template()));
@@ -595,7 +652,10 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
                     return plan;
                 }
                 javax.swing.SwingUtilities.invokeLater(() -> {
-                    showPlan(plan.plan());
+                    if (revision == selectionRevision) {
+                        plannedKey = selection.key();
+                        showPlan(plan.plan());
+                    }
                     log(plan.message());
                 });
             }
@@ -619,6 +679,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         }
         autoStopRecordingOnJobComplete = true;
         boolean cinematic = cinematicCameraBox.isSelected();
+        long revision = selectionRevision;
         runBusy("Starting recording before build...", client -> {
             LinkMessage rec = client.call(LinkRequest.recordStart());
             if (!rec.isOk()) {
@@ -644,7 +705,10 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
                         return result;
                     }
                     javax.swing.SwingUtilities.invokeLater(() -> {
-                        showPlan(plan.plan());
+                        if (revision == selectionRevision) {
+                            plannedKey = selection.key();
+                            showPlan(plan.plan());
+                        }
                         log(plan.message());
                     });
                 }
@@ -722,6 +786,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
 
     /** Worker thread: uploads the picture if needed and (re)creates the plan. */
     private LinkMessage ensurePlan(LinkClient client, Selection selection) throws LinkException, IOException {
+        if (selection.key().equals(plannedKey)) {
+            return client.call(LinkRequest.preview(BuildMode.PLAN, selection.planName()));
+        }
         LinkMessage plan;
         if (selection.image() != null) {
             LinkMessage upload = client.call(BuildInputs.uploadRequest(selection.image()));
@@ -730,10 +797,8 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             }
             plan = client.call(LinkRequest.planFromSource(selection.planName(), upload.source(), selection.scale()));
         } else {
-            plan = client.call(LinkRequest.planFromPrompt(selection.planName(), selection.prompt(), selection.scale()));
-        }
-        if (plan.isOk()) {
-            plannedKey = selection.key();
+            plan = client.call(LinkRequest.planFromPrompt(selection.planName(), selection.prompt(), selection.scale(),
+                selection.generation()));
         }
         return plan;
     }
@@ -785,7 +850,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
                 notice("Choose a template first.", true);
                 return null;
             }
-            return new Selection(BuildMode.TEMPLATE, null, null, template, 0, template, "");
+            return new Selection(BuildMode.TEMPLATE, null, null, template, 0, template, "", null);
         }
         String name = planNameField.getText().trim();
         if (!BuildInputs.isValidPlanName(name)) {
@@ -807,7 +872,7 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
                 notice("Cannot read the picture: " + ex.getMessage(), true);
                 return null;
             }
-            return new Selection(BuildMode.PLAN, null, imageFile, null, scale, name, version);
+            return new Selection(BuildMode.PLAN, null, imageFile, null, scale, name, version, null);
         }
         String prompt = promptArea.getText().trim();
         if (prompt.isEmpty()) {
@@ -819,10 +884,37 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
             notice("The description is too long (max " + LinkProtocol.MAX_PROMPT_LENGTH + " characters).", true);
             return null;
         }
-        return new Selection(BuildMode.PLAN, prompt, null, null, scale, name, "");
+        try {
+            return new Selection(BuildMode.PLAN, prompt, null, null, scale, name, "",
+                generationModel.resolve(generationInputs()));
+        } catch (IllegalArgumentException ex) {
+            notice(ex.getMessage(), true);
+            return null;
+        }
+    }
+
+    private PlanGenerationModel.Inputs generationInputs() {
+        return new PlanGenerationModel.Inputs(promptArea.getText().trim(), planNameField.getText().trim(),
+            scaleSlider.getValue(), (String) layoutChoice.getSelectedItem(), (String) styleChoice.getSelectedItem(),
+            seedField.getText(), settings.layoutWeights());
+    }
+
+    private void generationEdited() {
+        selectionRevision++;
+        try {
+            PlanGenerationModel.validate(generationInputs());
+            seedField.setForeground(UIManager.getColor("TextField.foreground"));
+        } catch (IllegalArgumentException ex) {
+            seedField.setForeground(RED);
+        }
+        // Keep the last valid plan until a valid new selection is submitted; its key includes all generation choices.
+        updateControls();
     }
 
     private void chooseImage() {
+        if (busy) {
+            return;
+        }
         JFileChooser chooser = new JFileChooser(imageFile == null ? null : imageFile.getParent().toFile());
         chooser.setDialogTitle("Choose a picture");
         chooser.setFileFilter(new FileNameExtensionFilter("Pictures (png, jpg, gif, webp)", "png", "jpg", "jpeg", "gif", "webp"));
@@ -832,12 +924,16 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     }
 
     private void setImage(Path file) {
+        if (busy) {
+            return;
+        }
         String problem = BuildInputs.checkImage(file);
         if (problem != null) {
             notice(problem, true);
             return;
         }
         imageFile = file;
+        selectionRevision++;
         plannedKey = null;
         sourceTabs.setSelectedIndex(TAB_IMAGE);
         imagePreview.setIcon(null);
@@ -867,9 +963,13 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
     }
 
     private void openSettings() {
+        if (busy) {
+            return;
+        }
         SettingsDialog dialog = new SettingsDialog(this, settings);
         dialog.setVisible(true);
         if (dialog.saved()) {
+            selectionRevision++;
             cinematicCameraBox.setSelected(settings.cameraNpcSettings().cameraEnabled());
             npcBuildersBox.setSelected(settings.cameraNpcSettings().npcEnabled());
             autoReconnect = true;
@@ -1031,8 +1131,14 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
         boolean template = sourceTabs.getSelectedIndex() == TAB_TEMPLATE;
         boolean active = job != null && job.isActive();
         boolean ready = template ? templateList.getSelectedValue() != null : BuildInputs.isValidPlanName(planNameField.getText().trim());
-        scaleSlider.setEnabled(!template);
-        planNameField.setEnabled(!template);
+        scaleSlider.setEnabled(!template && !busy);
+        planNameField.setEnabled(!template && !busy);
+        promptArea.setEditable(!busy);
+        sourceTabs.setEnabled(!busy);
+        layoutChoice.setEnabled(!busy);
+        styleChoice.setEnabled(!busy);
+        seedField.setEditable(!busy);
+        variationButton.setEnabled(!busy && sourceTabs.getSelectedIndex() == TAB_PROMPT);
         previewButton.setEnabled(connected && !busy && ready);
         buildButton.setEnabled(hasPlayer && !busy && ready && !active);
         buildAndRecordButton.setEnabled(hasPlayer && !busy && ready && !active);
@@ -1137,9 +1243,9 @@ final class MainWindow extends JFrame implements ArchitectConnection.Listener {
 
     /** Everything needed to plan/build, captured on the event thread. */
     private record Selection(BuildMode mode, String prompt, Path image, String template, int scale, String planName,
-                             String imageVersion) {
+                             String imageVersion, PlanGenerationOptions generation) {
         String key() {
-            return mode + "|" + prompt + "|" + image + "|" + imageVersion + "|" + scale + "|" + planName;
+            return mode + "|" + prompt + "|" + image + "|" + imageVersion + "|" + scale + "|" + planName + "|" + generation;
         }
     }
 

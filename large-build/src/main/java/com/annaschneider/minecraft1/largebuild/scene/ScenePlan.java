@@ -17,11 +17,17 @@ public record ScenePlan(
     long seed,
     int scale,
     List<SceneRegion> regions,
-    List<String> notes
+    List<String> notes,
+    GenerationMetadata metadata
 ) {
     public static final int FORMAT_VERSION = 1;
     public static final int MAX_REGIONS = 50_000;
     public static final Pattern ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
+
+    public ScenePlan(int formatVersion, String id, String title, String source, String provider, String style,
+                     long seed, int scale, List<SceneRegion> regions, List<String> notes) {
+        this(formatVersion, id, title, source, provider, style, seed, scale, regions, notes, null);
+    }
 
     public ScenePlan {
         if (formatVersion != FORMAT_VERSION) {

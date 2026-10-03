@@ -66,7 +66,9 @@ public final class HeuristicImageAnalysisProvider implements ImageAnalysisProvid
         notes.add("Heuristic analysis: pixels are not inspected; layout is seeded by the content hash.");
         Set<RegionType> features;
         if (matched.isEmpty()) {
-            features = EnumSet.allOf(RegionType.class);
+            features = EnumSet.of(RegionType.PALACE_CORE, RegionType.BRIDGE, RegionType.TERRACE,
+                RegionType.WATERFALL, RegionType.ISLAND, RegionType.PATH, RegionType.GARDEN,
+                RegionType.CHERRY_TREES, RegionType.CLOUDS);
             notes.add("No keywords in the image name; using the full fantasy scene (palace, terraces, islands, bridges, waterfalls, gardens, cherry trees, paths, clouds).");
         } else {
             features = EnumSet.copyOf(matched);

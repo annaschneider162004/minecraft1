@@ -20,7 +20,11 @@ public final class BlockCatalog {
         "minecraft:mossy_stone_bricks", "minecraft:cherry_log", "minecraft:cherry_leaves", "minecraft:lily_pad",
         "minecraft:moss_block", "minecraft:gravel", "minecraft:pink_tulip", "minecraft:allium", "minecraft:azure_bluet",
         "minecraft:lily_of_the_valley", "minecraft:oxeye_daisy", "minecraft:white_wool", "minecraft:coarse_dirt",
-        "minecraft:dirt"
+        "minecraft:dirt",
+        // style-aware ground-based layouts
+        "minecraft:purple_concrete", "minecraft:sandstone", "minecraft:red_sandstone",
+        "minecraft:bricks", "minecraft:iron_block", "minecraft:gray_concrete", "minecraft:stone_slab",
+        "minecraft:dead_bush", "minecraft:poppy"
     );
 
     private BlockCatalog() {

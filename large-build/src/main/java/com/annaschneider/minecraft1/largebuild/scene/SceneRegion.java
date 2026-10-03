@@ -15,6 +15,9 @@ import java.util.Objects;
  *   <li>WATERFALL: sizeX = width, sizeY = fall height</li>
  *   <li>GARDEN / CHERRY_TREES: sizeX = diameter</li>
  *   <li>CLOUDS: sizeX x sizeZ = area starting at the origin, sizeY = thickness</li>
+ *   <li>Grounded primitives (FOUNDATION, BUILDING, TOWER, WALL, ROAD, STAIR, ROCK, LEDGE,
+ *       PLANTING, GROVE, POOL): rectangular sizeX x sizeY x sizeZ, originating at their minimum corner.
+ *       STAIR ascends one block per local +X step and clears space above the treads.</li>
  * </ul>
  */
 public record SceneRegion(

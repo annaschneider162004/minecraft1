@@ -93,7 +93,9 @@ class ImagePlanningTest {
         assertNotEquals(a.regions(), c.regions());
         assertEquals(DeterministicScenePlanner.ID, planner.id());
         Set<RegionType> types = a.regions().stream().map(r -> r.type()).collect(Collectors.toSet());
-        assertEquals(EnumSet.allOf(RegionType.class), types, "no keywords -> full fantasy scene");
+        assertEquals(EnumSet.of(RegionType.PALACE_CORE, RegionType.BRIDGE, RegionType.TERRACE,
+            RegionType.WATERFALL, RegionType.ISLAND, RegionType.PATH, RegionType.GARDEN,
+            RegionType.CHERRY_TREES, RegionType.CLOUDS), types, "no keywords -> original nine fantasy features");
         assertEquals(1, a.regions().stream().filter(r -> r.type() == RegionType.PALACE_CORE).count());
         long islands = a.regions().stream().filter(r -> r.type() == RegionType.ISLAND).count();
         assertEquals(islands - 1, a.regions().stream().filter(r -> r.type() == RegionType.BRIDGE).count(),

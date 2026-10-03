@@ -38,6 +38,12 @@ users type a prompt, pick a picture or a template, preview the plan and start/pa
 mod in real time over the **Architect Link protocol** (`architect-link`: JSON lines over a token-protected TCP socket on
 `127.0.0.1` only). See [Desktop app for Windows](#desktop-app-for-windows--ứng-dụng-windows).
 
+**Text layout diversity:** Describe it now supports RADIAL, LINEAR, TERRACED, RING, GRID and CLIFF, plus explicit
+LEGACY. Choose Layout/Style, enter a signed 64-bit Seed or use **New variation**, then Preview and Build the same saved
+geometry. Auto uses seeded, style-weighted selection; Settings provides layout-weight overrides. Image analysis remains
+metadata-only with legacy defaults. See the [technical specification and examples](docs/multi-layout-generation.md).
+Rebuild/reinstall **both the desktop and mod** (JDK 25 for the real Fabric jar).
+
 ---
 
 ## Requirements
@@ -335,6 +341,10 @@ mirror and seed. Region types: `palace`, `bridge`, `terrace`, `waterfall`, `isla
 returns a `ProceduralBlueprint`; `ScenePreview` reports size, sections, chunk columns and a sampled block estimate without
 generating the scene.
 
+Text layouts additionally use real ground-based foundation/rock, road, building/tower, ledge, stair, wall and decoration
+regions, with style-aware materials. Optional generation metadata retains the full prompt, selected layout/generator
+version and effective weights; old JSON plans without metadata retain their original geometry.
+
 Generators (`generator/`) implement `StructureGenerator.blockAt(x, y, z)` as pure functions of local coordinates and a
 seed, so any section can be generated independently and in any order. Parameters are range-checked (e.g. palace
 half-width 12..128, island radius 6..512, clouds up to 16384×16384). Rotation (0/90/180/270, clockwise seen from above,
@@ -566,7 +576,8 @@ the mod; no client-only classes are loaded by the server.
 └───────────────────────────────────────────────────────────────┘
 ```
 
-1. **Describe it** – type e.g. *white palace with waterfalls, bridges and cherry trees* (keywords shape the layout), or
+1. **Describe it** – type e.g. *a medieval linear town with gardens, no floating islands, no central palace*;
+   choose **Layout**, **Style** and **Seed** (blank resolves once), or click **New variation**, or
    **From a picture** – drag a PNG/JPG/GIF/WebP (≤ 8 MiB) onto the box or click *Choose picture…*, or **Template** –
    house, castle, temple, village.
 2. Move **Size** (bigger = more blocks; the label shows an estimate) and keep or change the plan **Name**.
@@ -734,6 +745,8 @@ ghép và xuất MP4 (không cần bấm Export). **Record only** chỉ quay vid
 4. Chọn **Describe it** (gõ mô tả), **From a picture** (kéo thả ảnh) hoặc **Template** (mẫu có sẵn) → chỉnh **Size**
    → bấm **Preview** để xem sơ đồ → bấm **Build in Minecraft**. Dùng **Pause/Resume**, **Cancel**, **Undo last build**
    khi cần; theo dõi thanh tiến độ và nhật ký ở dưới.
+   Với **Describe it**, chọn **Layout/Style**, nhập **Seed** hoặc bấm **New variation** rồi Preview lại.
+   Seed và hình học đã lưu được dùng nguyên khi Build; ảnh vẫn chỉ phân tích metadata, không phân tích pixel.
 5. Dùng launcher khác (CurseForge, Prism…)? Bấm **Settings…** và chọn file
    `<thư mục instance>\config\architect\desktop-link.json`.
 

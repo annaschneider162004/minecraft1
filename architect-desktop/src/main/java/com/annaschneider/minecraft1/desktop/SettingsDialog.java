@@ -31,6 +31,7 @@ final class SettingsDialog extends JDialog {
     private final DesktopSettings settings;
     private final JTextField linkFileField = new JTextField(42);
     private final JTextField playerField = new JTextField(16);
+    private final JTextField layoutWeightsField = new JTextField(42);
     private final JCheckBox cameraEnabled = new JCheckBox("Enable cinematic camera");
     private final JCheckBox npcEnabled = new JCheckBox("Show builder NPCs");
     private final JSpinner maxNpcs = new JSpinner(new SpinnerNumberModel(4, 0, 12, 1));
@@ -43,6 +44,7 @@ final class SettingsDialog extends JDialog {
         this.settings = settings;
         linkFileField.setText(settings.linkFile().toString());
         playerField.setText(settings.player());
+        layoutWeightsField.setText(settings.layoutWeights());
         CameraNpcSettings cameraNpc = settings.cameraNpcSettings();
         cameraEnabled.setSelected(cameraNpc.cameraEnabled());
         npcEnabled.setSelected(cameraNpc.npcEnabled());
@@ -136,6 +138,15 @@ final class SettingsDialog extends JDialog {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Connection", form);
         tabs.addTab("Camera & NPC Settings", cameraPanel);
+        JPanel generationPanel = new JPanel(new BorderLayout(0, 8));
+        generationPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        generationPanel.add(new JLabel("Advanced layout weights (Auto layout):"), BorderLayout.NORTH);
+        generationPanel.add(layoutWeightsField, BorderLayout.CENTER);
+        generationPanel.add(new JLabel("<html>Comma-separated layout=weight, e.g. RADIAL=1,LINEAR=2,GRID=0."
+            + "<br>Weighted layouts: RADIAL, LINEAR, TERRACED, RING, GRID, CLIFF (case-insensitive)."
+            + "<br>Finite nonnegative decimals only; no duplicate layouts. Blank uses built-in weights."
+            + "<br>Saved per user in Preferences under layoutWeights.</html>"), BorderLayout.SOUTH);
+        tabs.addTab("Plan generation", generationPanel);
         getContentPane().add(tabs, BorderLayout.CENTER);
         getContentPane().add(buttons, BorderLayout.SOUTH);
         getRootPane().setDefaultButton(save);
@@ -172,6 +183,12 @@ final class SettingsDialog extends JDialog {
         }
         Path linkFile;
         try {
+            PlanGenerationModel.parseWeights(layoutWeightsField.getText());
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Layout weights", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        try {
             linkFile = Path.of(linkFileField.getText().trim());
         } catch (InvalidPathException ex) {
             JOptionPane.showMessageDialog(this, "That is not a valid file path.", "Link file", JOptionPane.WARNING_MESSAGE);
@@ -179,6 +196,7 @@ final class SettingsDialog extends JDialog {
         }
         settings.setLinkFile(linkFile);
         settings.setPlayer(player);
+        settings.setLayoutWeights(layoutWeightsField.getText());
         settings.setCameraNpcSettings(new CameraNpcSettings(cameraEnabled.isSelected(), npcEnabled.isSelected(),
             (int) maxNpcs.getValue(), (int) cameraHeight.getValue(), (int) rotationSpeed.getValue()));
         saved = true;

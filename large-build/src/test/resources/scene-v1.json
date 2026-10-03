@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "id": "old_fixture",
+  "title": "Original v1 fixture",
+  "source": "placeholder:legacy",
+  "provider": "deterministic-kingdom-v1",
+  "style": "white_gold",
+  "seed": 17,
+  "scale": 1,
+  "regions": [
+    {"id":"island","type":"ISLAND","x":0,"y":0,"z":0,"sizeX":33,"sizeY":8,"sizeZ":33,"rotation":0,"mirror":"NONE","seed":17},
+    {"id":"path","type":"PATH","x":-8,"y":1,"z":0,"sizeX":17,"sizeY":1,"sizeZ":3,"rotation":0,"mirror":"NONE","seed":17}
+  ],
+  "notes": ["Unmodified v1 geometry"]
+}

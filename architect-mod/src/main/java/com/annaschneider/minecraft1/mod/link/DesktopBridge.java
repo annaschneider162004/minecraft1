@@ -5,6 +5,8 @@ import com.annaschneider.minecraft1.domain.BlueprintBlock;
 import com.annaschneider.minecraft1.instantbuilder.TemplateRegistry;
 import com.annaschneider.minecraft1.largebuild.blueprint.Bounds;
 import com.annaschneider.minecraft1.largebuild.engine.JobProgress;
+import com.annaschneider.minecraft1.largebuild.image.LayoutType;
+import com.annaschneider.minecraft1.largebuild.image.PlanOptions;
 import com.annaschneider.minecraft1.largebuild.scene.SceneCompiler;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePlan;
 import com.annaschneider.minecraft1.largebuild.scene.ScenePreview;
@@ -35,6 +37,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -299,9 +302,24 @@ public final class DesktopBridge implements AutoCloseable {
     }
 
     private LinkMessage plan(LinkConnection connection, LinkRequest request) {
-        String source = request.source() != null && !request.source().isBlank()
-            ? request.source()
-            : "placeholder:" + LinkProtocol.slug(request.prompt(), "prompt");
+        if (request.prompt() != null && !request.prompt().isBlank()) {
+            var generation = request.generation();
+            Map<LayoutType, Double> weights = new EnumMap<>(LayoutType.class);
+            if (generation != null && generation.weights() != null) {
+                generation.weights().forEach((layout, weight) ->
+                    weights.put(LayoutType.valueOf(layout.toUpperCase(Locale.ROOT)), weight));
+            }
+            PlanOptions options = new PlanOptions(request.planId(), request.scale(),
+                generation == null || generation.layout() == null ? LayoutType.AUTO
+                    : LayoutType.valueOf(generation.layout().toUpperCase(Locale.ROOT)),
+                generation == null ? null : generation.style(),
+                generation == null ? null : generation.seed(), weights);
+            ScenePlan plan = engine.createTextPlan(anyPlayerId(connection), request.prompt(), options);
+            return LinkMessage.ok(null, "Text plan '" + plan.id() + "' created and saved: layout "
+                + plan.metadata().layout() + ", style " + plan.style() + ", seed " + plan.seed()
+                + ". " + String.join(" ", plan.notes())).withPlan(planSummary(plan));
+        }
+        String source = request.source();
         CommandResult result = engine.execute(anyPlayerId(connection), null,
             "/architect image plan " + source + " " + request.planId() + " " + request.scale());
         if (!result.success()) {
@@ -351,6 +369,12 @@ public final class DesktopBridge implements AutoCloseable {
             boxes.add(new RegionBox(region.type().id(), bounds.minX(), bounds.minZ(), bounds.maxX(), bounds.maxZ()));
         }
         StringBuilder text = new StringBuilder(preview.describe());
+        text.append("\nLayout ").append(plan.metadata() == null ? "LEGACY (stored geometry)" : plan.metadata().layout())
+            .append(", style ").append(plan.style()).append(", seed ").append(plan.seed());
+        if (plan.metadata() != null) {
+            text.append(", generator ").append(plan.metadata().generatorId())
+                .append(" version ").append(plan.metadata().generatorVersion());
+        }
         plan.notes().forEach(note -> text.append('\n').append("- ").append(note));
         Bounds bounds = preview.bounds();
         return new PlanSummary(plan.id(), plan.title(), text.toString(), bounds.sizeX(), bounds.sizeY(), bounds.sizeZ(),
