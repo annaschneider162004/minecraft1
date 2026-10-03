@@ -14,7 +14,10 @@ import com.annaschneider.minecraft1.video.story.StoryService;
 import com.annaschneider.minecraft1.video.story.TemplateStoryGenerator;
 import com.annaschneider.minecraft1.video.voice.Narrator;
 import com.annaschneider.minecraft1.video.voice.PiperTtsEngine;
+import com.annaschneider.minecraft1.video.voice.VoiceCatalog;
+import com.annaschneider.minecraft1.video.voice.VoiceCatalogSource;
 import com.annaschneider.minecraft1.video.voice.VoiceDiscovery;
+import com.annaschneider.minecraft1.video.voice.VoiceInstaller;
 import com.annaschneider.minecraft1.video.voice.VoicePackRegistry;
 import com.annaschneider.minecraft1.video.voice.ClonedVoiceProfiles;
 import com.annaschneider.minecraft1.video.voice.VoicePack;
@@ -90,6 +93,19 @@ final class VideoStudio {
         List<String> problems = new ArrayList<>(packs.problems());
         problems.addAll(clones.problems());
         return new VoiceDiscovery(settings.voicesFolder(), voices, problems);
+    }
+
+    /**
+     * The unified voice catalog: the installed voices plus the verified downloadable entries bundled with the app,
+     * multi-speaker models expanded per speaker. Without catalog data only the installed voices are listed.
+     */
+    VoiceCatalog voiceCatalog(VoiceDiscovery installed) {
+        return VoiceCatalog.build(installed, VoiceCatalogSource.bundled());
+    }
+
+    /** Installs a verified catalog voice; only called when the user clicks Install voice. */
+    VoiceInstaller voiceInstaller() {
+        return VoiceInstaller.https();
     }
 
     /** @throws IllegalArgumentException when local AI is enabled with a non-local address */

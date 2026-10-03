@@ -233,7 +233,9 @@ minecraft1/
 ├── video-studio/          # prompt -> story -> clip plan -> narration (Piper) -> MP4 (FFmpeg); ExportFlow runs
 │   │                      #   recording + narration in parallel and auto-exports; no Minecraft dependency
 │   ├── story/             #   prompt analysis, deterministic templates (EN/VI), optional local Ollama writer, fallback
-│   ├── voice/             #   voice-pack discovery/validation, TTS engine SPI, Piper engine, narrator, narration track
+│   ├── voice/             #   voice-pack discovery/validation, unified voice catalog (installed + cloned + verified
+│   │                      #   downloadable, multi-speaker expansion, filters, atomic installer), TTS engine SPI, Piper
+│   │                      #   engine (speaker selection), narrator, narration track
 │   ├── record/            #   recorder SPI, FFmpeg screen recorder (gdigrab / avfoundation / x11grab)
 │   └── render/            #   FFmpeg locator/probe, segment renderer, subtitles
 └── architect-desktop/     # Windows desktop companion app (Swing), talks to the mod via architect-link
@@ -285,7 +287,10 @@ Included unit tests:
   without footage, missing FFmpeg, temp-file cleanup), the three export modes (Record only, Narrate only, Auto-export
   when both complete), recording and narration running in parallel with automatic muxing, failures (missing FFmpeg or
   voice backend, recording/narration/mux errors) that keep finished outputs, cancellation, EN/VI status labels, screen
-  grabber selection, the narration track and, when FFmpeg is installed, a real MP4 render
+  grabber selection, the narration track, the unified voice catalog (bundled metadata parsing, installed + downloadable
+  merge, multi-speaker expansion with stable ids, exact voice/speaker in preview, narrate-only and export, filters and
+  search over a synthetic 20,000-entry test catalog, single-speaker packs and cloned voices unchanged, invalid speaker / unsupported language
+  errors, verified atomic install with rollback) and, when FFmpeg is installed, a real MP4 render
 
 ## Large-build engine (multi-million-block builds)
 
@@ -616,7 +621,8 @@ Click **Video Studio...** in the connection bar. Everything runs on this compute
    a Vietnamese voice) gives a Vietnamese story.
 3. **Add footage** – **ReplayMod videos...** or **Add videos...** (MP4/MKV/MOV/WebM…). Without footage the video is made
    of title cards. Unreadable files are skipped with a warning.
-4. **Pick a voice** – choose from the list and click **Preview voice**.
+4. **Pick a voice** – search or filter the voice catalog, select a voice (or one speaker of a multi-speaker model) and
+   click **Preview voice**. Downloadable voices must be installed first (**Install voice...**, see below).
 5. **Write story** (editable scene list: title, narration, footage moment) → **Export video**. The output folder
    (default `Videos\Minecraft Architect`) receives `<title>-<date>.mp4` (H.264 + AAC), `.srt` subtitles and
    `-story.txt`. Temporary clips go to a `architect-video-*` temp folder that is deleted afterwards.
@@ -674,6 +680,53 @@ narration → `SegmentPlanner` (clip selection, ordering, trimming, timelapse up
 
 Ollama is only contacted on `localhost`/`127.0.0.1`/`::1`.
 
+**Voice catalog** – the Video Studio shows **one list** of every voice it knows about:
+
+| Kind | Where it comes from | Usable offline |
+|---|---|---|
+| **Installed** | Piper packs in the voices folder (added by hand or with **Install voice...**) | yes |
+| **Cloned** | your XTTS voice profiles (see *Clone voice from sample...*) | yes |
+| **Downloadable** | the verified catalog bundled with the app (`video-studio/.../voice/voice-catalog.json`) | after an explicit install |
+
+The bundled catalog contains only real, published Piper voices: the **English and Vietnamese** models listed in the
+official Piper `voices.json` metadata (id, language, quality, file paths, exact sizes, MD5 checksums and speaker maps).
+Today that is **41 models (38 English, 3 Vietnamese)** that expand to **2,073 selectable entries (2,006 English, 67
+Vietnamese)**. Be aware of what those numbers mean:
+
+- 8 models are **multi-speaker**: `en_US-libritts-high` (904 speakers), `en_US-libritts_r-medium` (904),
+  `en_GB-vctk-medium` (109), `vi_VN-vivos-x_low` (65), `en_US-l2arctic-medium` (24), `en_US-arctic-medium` (18),
+  `en_GB-aru-medium` (12), `en_GB-semaine-medium` (4). The two LibriTTS models are trained on the same 904 LibriTTS
+  speakers, and several single-speaker voices exist in more than one quality, so there are about **1,160 distinct
+  speakers** behind the 2,073 entries.
+- Vietnamese is limited to what Piper publishes: `vi_VN-vais1000-medium` (1 speaker – the "1000" is the dataset name,
+  not a speaker count), `vi_VN-25hours_single-low` (1) and `vi_VN-vivos-x_low` (65).
+- No entry is invented, renamed or duplicated to inflate the count. The browser (background filtering, debounced search,
+  a virtualised list) is built to stay responsive with thousands of entries, so it shows **1000+ entries whenever the
+  verified data contains that many** – and only what the data contains. If the catalog resource is missing or invalid,
+  the log says so and the installed and cloned voices keep working.
+
+Filters: **Language** (`en`, `vi`, or an exact locale), **Engine** (`piper`, `xtts`), **State** (*All*, *Installed*,
+*Downloadable*, *Cloned*), **Multi-speaker only**, plus a search box (name, id, language, speaker, description).
+Each row shows the state, language, engine, source and – for multi-speaker models – the speaker.
+
+**Multi-speaker models and speaker selection** – one model is shown once per speaker. Each speaker has a stable id made
+from the model id and the speaker index, e.g. `en_US-arctic-medium#speaker-2` (never the display name), so the choice
+survives restarts, refreshes and installing the model. Single-speaker packs and cloned voices keep their old id, so a
+voice saved by an older version is still selected. Piper receives the speaker with `--speaker <index>`.
+
+**The exact voice is used everywhere** – **Preview voice**, **Narrate only**, **Export video** and **Auto-export** all
+speak with the selected voice and speaker, and the log shows it (e.g. *Voice: Arctic medium - awb (speaker 0 of
+en_US-arctic-medium, en_US, piper)*). There is no silent fallback to
+another voice: an unknown speaker, a downloadable voice that is not installed, or a language the engine cannot speak
+(e.g. a non-English XTTS clone profile) is reported as an error.
+
+**Install voice...** – select a downloadable entry and click **Install voice...**. Nothing is downloaded until you
+confirm the dialog (it shows the size and the source). The model and config are downloaded over HTTPS from
+`huggingface.co/rhasspy/piper-voices` into a temporary folder inside the voices folder, checked against the catalog's
+exact size and MD5, validated like any other pack (including the speaker list), and only then moved into
+`<voices>/<model id>/` in one step. A failed, invalid or cancelled download is rolled back and leaves nothing behind.
+Check each model's `MODEL_CARD` on Hugging Face for its license before using it in published videos.
+
 **Voice packs** – the voices folder is `%APPDATA%\MinecraftArchitect\voices` (macOS:
 `~/Library/Application Support/MinecraftArchitect/voices`, Linux: `~/.minecraft-architect/voices`; override with
 `ARCHITECT_VOICES_DIR` or in **Tools...**). Add a voice without any code change:
@@ -701,9 +754,9 @@ the id is already used or the files point outside the voices folder.
 3. Name the voice. **Checking sample...** → **Creating voice profile...** → **Voice profile ready** means a test
    synthesis succeeded. The voices folder stores `clone-<uuid>.cloned.json` and its own `clone-<uuid>.sample.wav` copy;
    the original upload can be removed. Delete both stored files to remove the profile, then **Refresh**.
-4. Select **Clone from sample audio**, choose the profile, and **Preview voice / Nghe thử voice**. Preview, **Narrate
-   only**, **Export video**, and **Auto-export** use the same sample-conditioned engine. Profiles are rediscovered after
-   restarting the app. **Built-in voice** and **Custom voice pack** modes both show the existing installed Piper packs.
+4. Select the profile in the voice catalog (set **State** to *Cloned* to see only clones) and **Preview voice / Nghe
+   thử voice**. Preview, **Narrate only**, **Export video**, and **Auto-export** use the same sample-conditioned engine.
+   Profiles are rediscovered after restarting the app and are listed next to the installed Piper packs.
 
 This backend currently generates **English** narration only (XTTS v2 does not support Vietnamese). All synthesis runs
 locally on CPU; it may take several minutes. Missing tools/models show **Voice cloning unavailable**; failed creation
@@ -717,6 +770,12 @@ No audio is uploaded, and no Python/model dependencies are bundled with the app.
 - *"Narration skipped: …"* – Piper or the voice is missing/broken; the MP4 is still exported. Check **Tools...**, which
   lists every program and every rejected voice pack.
 - *"No voices yet"* – the folder must contain both `.onnx` and `.onnx.json` with the same name.
+- *"Voice '…' is not installed yet. Select it and click Install voice…"* – the selected catalog voice is downloadable
+  only; install it first.
+- *"Speaker … does not exist in voice …"* / *"… supports English profiles only …"* – the selected speaker or language
+  does not match the model or engine; pick another catalog entry (nothing falls back to a different voice).
+- *Install failed* – the log shows why (network, size/checksum mismatch, invalid model); nothing was written to the
+  voices folder, so just retry.
 - *"Local AI unavailable, using templates"* – start Ollama (`ollama serve`) and pull the model, or untick **Use local AI**.
 - *Export failed: Recording failed* – **Tools...** shows whether screen recording is available (FFmpeg found, X11
   display on Linux, screen-recording permission on macOS). The log has FFmpeg's message.
@@ -728,7 +787,11 @@ No audio is uploaded, and no Python/model dependencies are bundled with the app.
 **Tiếng Việt:** bấm **Video Studio...** → gõ yêu cầu (ví dụ *Video 60 giây kể chuyện một vương quốc mọc lên từ đảo
 hoang*) → **ReplayMod videos...** để thêm video đã render → chọn giọng, bấm **Preview voice** để nghe thử → **Write
 story** → **Export video**. Cần cài **FFmpeg**; muốn có giọng đọc thì cài **Piper** và chép giọng (`.onnx` + `.onnx.json`)
-vào thư mục voices rồi bấm **Refresh**. Không có Piper/giọng thì video vẫn được xuất nhưng không có lời đọc; không có
+vào thư mục voices rồi bấm **Refresh**, hoặc chọn một giọng *Downloadable* trong danh mục và bấm **Install voice...**
+(chỉ tải khi bạn xác nhận). Danh mục gộp giọng đã cài, giọng clone và giọng tải được đã xác minh (hiện có 41 model,
+2.073 mục; tiếng Việt: 3 model, 67 mục); model nhiều người nói được tách thành từng người nói (ví dụ
+`vi_VN-vivos-x_low#speaker-3`). Preview và xuất video luôn dùng đúng giọng/người nói đã chọn; app không tạo giọng giả để
+tăng số lượng. Không có Piper/giọng thì video vẫn được xuất nhưng không có lời đọc; không có
 Ollama thì dùng kịch bản mẫu. Muốn tự động: ở bước **5** chọn **Mode** → **Auto-export when both complete**, đặt
 **Record (seconds)**, bấm **Start** rồi xây trong Minecraft: app vừa quay màn hình vừa tạo giọng đọc, xong cả hai thì tự
 ghép và xuất MP4 (không cần bấm Export). **Record only** chỉ quay video thô; **Narrate only** chỉ tạo file giọng đọc
